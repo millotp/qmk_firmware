@@ -73,10 +73,7 @@
         "cols": ["B2", "B6", "B3", "B1", "F7", "F6"]
     },
     "encoder": {
-        "enabled": true,
-        "rotary": [
-            {"pin_a": "D4", "pin_b": "C6"}
-        ]
+        "enabled": false
     },
     "split": {
         "bootmagic": {
@@ -86,13 +83,6 @@
             "right": {
                 "rows": ["B1", "B3", "B2", "B6"],
                 "cols": ["D4", "C6", "D7", "E6", "B4", "B5"]
-            }
-        },
-        "encoder": {
-            "right": {
-                "rotary": [
-                    {"pin_a": "F6", "pin_b": "F7"}
-                ]
             }
         },
         "handedness": {
