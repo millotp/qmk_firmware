@@ -1,19 +1,20 @@
 {
-  "keyboard_name": "Pierre's Corne",
   "version": 1,
-  "features": {
-    "backlight": false,
-    "rgblight": false,
-    "rgb_matrix": true
-  },
-  "rgb_matrix": {
-    "animations": {
-        "solid_reactive_simple": true
+  "config": {
+    "features": {
+        "backlight": false,
+        "rgblight": false,
+        "rgb_matrix": true
     },
-    "default": {
-        "animation": "solid_reactive_simple",
-        "hue": 238,
-        "sat": 200
+    "rgb_matrix": {
+        "animations": {
+            "solid_reactive_simple": true
+        },
+        "default": {
+            "animation": "solid_reactive_simple",
+            "hue": 238,
+            "sat": 200
+        }
     }
   },
   "converter": "liatris",
