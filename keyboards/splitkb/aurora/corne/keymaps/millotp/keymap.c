@@ -143,14 +143,17 @@ static void draw_grid(void) {
 // Generation counter
 static uint16_t generation = 0;
 static bool initialized = false;
+static uint32_t last_inject = 0;
+#define SLAVE_INJECT_INTERVAL 3000  // Slave auto-injects every 3 seconds
 
 bool oled_task_user(void) {
     // Initialize on first run
     if (!initialized) {
-        rng_state = timer_read();  // Seed RNG with timer
+        rng_state = timer_read() ^ (is_keyboard_master() ? 0xABCD : 0x1234);
         seed_grid();
         initialized = true;
         last_update = timer_read32();
+        last_inject = timer_read32();
     }
     
     // Update simulation at fixed interval
@@ -164,6 +167,12 @@ bool oled_task_user(void) {
             seed_grid();
             generation = 0;
         }
+    }
+    
+    // Slave side: auto-inject life periodically to keep things interesting
+    if (!is_keyboard_master() && timer_elapsed32(last_inject) > SLAVE_INJECT_INTERVAL) {
+        inject_life();
+        last_inject = timer_read32();
     }
     
     // Clear and redraw
