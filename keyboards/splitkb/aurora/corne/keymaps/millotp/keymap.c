@@ -8,67 +8,32 @@
 #ifdef OLED_ENABLE
 
 // Session statistics
-static uint32_t session_keystrokes = 0;
 static uint32_t session_start_time = 0;
 static uint8_t  peak_wpm = 0;
 static bool     session_started = false;
-
-// Track keypresses for stats
-bool process_record_user(uint16_t keycode, keyrecord_t *record) {
-    if (record->event.pressed) {
-        session_keystrokes++;
-        
-        // Start session timer on first keypress
-        if (!session_started) {
-            session_start_time = timer_read32();
-            session_started = true;
-        }
-        
-        // Track peak WPM
-        uint8_t current_wpm = get_current_wpm();
-        if (current_wpm > peak_wpm) {
-            peak_wpm = current_wpm;
-        }
-    }
-    return true;
-}
-
-// Format number with commas for readability (e.g., 1,234)
-static void write_number(uint32_t num) {
-    char buf[12];
-    if (num >= 1000000) {
-        snprintf(buf, sizeof(buf), "%luM", (unsigned long)(num / 1000000));
-    } else if (num >= 1000) {
-        snprintf(buf, sizeof(buf), "%lu,%03lu", (unsigned long)(num / 1000), (unsigned long)(num % 1000));
-    } else {
-        snprintf(buf, sizeof(buf), "%lu", (unsigned long)num);
-    }
-    oled_write(buf, false);
-}
-
-// Format time as HH:MM or MM:SS
-static void write_time(uint32_t ms) {
-    uint32_t seconds = ms / 1000;
-    uint32_t minutes = seconds / 60;
-    uint32_t hours = minutes / 60;
-    
-    char buf[8];
-    if (hours > 0) {
-        snprintf(buf, sizeof(buf), "%luh%02lu", (unsigned long)hours, (unsigned long)(minutes % 60));
-    } else {
-        snprintf(buf, sizeof(buf), "%lu:%02lu", (unsigned long)minutes, (unsigned long)(seconds % 60));
-    }
-    oled_write(buf, false);
-}
+static uint32_t estimated_keystrokes = 0;
+static uint32_t last_keystroke_update = 0;
 
 // Render session stats (for slave side) - 5 chars wide
 static void render_session_stats(void) {
     uint8_t current_wpm = get_current_wpm();
     char buf[6];  // 5 chars + null
     
+    // Start session on first typing activity (WPM > 0)
+    if (current_wpm > 0 && !session_started) {
+        session_start_time = timer_read32();
+        session_started = true;
+    }
+    
     // Update peak WPM
     if (current_wpm > peak_wpm) {
         peak_wpm = current_wpm;
+    }
+    
+    // Estimate keystrokes from WPM (5 chars per word, update every second)
+    if (current_wpm > 0 && timer_elapsed32(last_keystroke_update) > 1000) {
+        estimated_keystrokes += (current_wpm * 5) / 60;  // keys per second
+        last_keystroke_update = timer_read32();
     }
     
     // Title
@@ -97,12 +62,12 @@ static void render_session_stats(void) {
     // Spacer
     oled_write_P(PSTR("     "), false);
     
-    // Keystrokes
+    // Keystrokes (estimated from WPM)
     oled_write_P(PSTR("KEYS:"), false);
-    if (session_keystrokes >= 100000) {
-        snprintf(buf, sizeof(buf), "%4luK", (unsigned long)(session_keystrokes / 1000));
+    if (estimated_keystrokes >= 100000) {
+        snprintf(buf, sizeof(buf), "%4luK", (unsigned long)(estimated_keystrokes / 1000));
     } else {
-        snprintf(buf, sizeof(buf), "%5lu", (unsigned long)session_keystrokes);
+        snprintf(buf, sizeof(buf), "%5lu", (unsigned long)estimated_keystrokes);
     }
     oled_write(buf, false);
     
