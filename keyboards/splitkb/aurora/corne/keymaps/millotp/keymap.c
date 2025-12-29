@@ -144,7 +144,8 @@ static void draw_grid(void) {
 static uint16_t generation = 0;
 static bool initialized = false;
 static uint32_t last_inject = 0;
-#define SLAVE_INJECT_INTERVAL 3000  // Slave auto-injects every 3 seconds
+static uint8_t last_wpm = 0;
+#define INJECT_COOLDOWN 200  // ms between injections to avoid spam
 
 bool oled_task_user(void) {
     // Initialize on first run
@@ -169,10 +170,16 @@ bool oled_task_user(void) {
         }
     }
     
-    // Slave side: auto-inject life periodically to keep things interesting
-    if (!is_keyboard_master() && timer_elapsed32(last_inject) > SLAVE_INJECT_INTERVAL) {
-        inject_life();
-        last_inject = timer_read32();
+    // Slave side: detect typing via WPM changes (WPM is synced from master)
+    // Inject life when WPM increases (indicates active typing)
+    if (!is_keyboard_master()) {
+        uint8_t current_wpm = get_current_wpm();
+        if (current_wpm > last_wpm && timer_elapsed32(last_inject) > INJECT_COOLDOWN) {
+            inject_life();
+            rng_state ^= current_wpm;  // Add some variety
+            last_inject = timer_read32();
+        }
+        last_wpm = current_wpm;
     }
     
     // Clear and redraw
