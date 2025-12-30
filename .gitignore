@@ -129,3 +129,5 @@ via*.json
 
 node_modules/
 .env
+hid_fetcher/.yarn/*
+!hid_fetcher/.yarn/releases

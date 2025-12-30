@@ -1,10 +1,10 @@
 {
   "name": "hid_fetcher",
   "type": "module",
-  "packageManager": "yarn@6.0.0-rc.8",
   "dependencies": {
     "@types/node": "^25.0.3",
     "dotenv": "^17.2.3",
     "node-hid": "^3.2.0"
-  }
+  },
+  "packageManager": "yarn@4.12.0"
 }

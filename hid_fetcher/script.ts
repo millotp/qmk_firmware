@@ -8,11 +8,16 @@ Script that fetches data from different sources and sends it to the keyboard usi
 Each packet must be exactly 32 bytes long.
 */
 
-const LOCAL_DEV = true;
+const LOCAL_DEV = false;
+const MOCK_API_CALLS = true;
+
 const STOCKS = ['DDOG', 'AAPL'] as const;
-const METRO_LINES = ['6', '8', '9'] as const;
-const PARIS_LAT = 48.8575;
-const PARIS_LON = 2.3514;
+const METRO_LINES = {
+    // '6': 'line:IDFM:C01376',
+    // '8': 'line:IDFM:C01378',
+    '9': 'line:IDFM:C01379'
+} as const;
+const CITY = 'Paris,fr'
 
 const OPENWEATHERMAP_API_KEY = process.env.OPENWEATHERMAP_API_KEY!;
 const PRIM_API_KEY = process.env.PRIM_API_KEY!;
@@ -26,7 +31,7 @@ const METRO_DATA_TYPE = 2;
 const WEATHER_DATA_TYPE = 3;
 
 interface Data {
-    fetch(): Promise<void>;
+    refresh(): Promise<void>;
     serialize(): Buffer[];
 }
 
@@ -41,17 +46,33 @@ class StockData implements Data {
 
     constructor() { }
 
-    async fetch(): Promise<void> {
+    async makeCall() {
+        if (MOCK_API_CALLS) {
+            return {
+                'DDOG': {
+                    name: 'Datadog',
+                    stockName: 'DDOG',
+                    currentPrice: 134.23,
+                    dayChangePercent: -1.24,
+                    hourlyHistory: [120, 130],
+                },
+                'AAPL': {
+                    name: 'Apple',
+                    stockName: 'AAPL',
+                    currentPrice: 500.23,
+                    dayChangePercent: -20.24,
+                    hourlyHistory: [50, 100, 150, 200, 250, 300, 350, 400, 450],
+                }
+            }
+        }
+
+
+    }
+
+    async refresh(): Promise<void> {
+        const data = await this.makeCall();
         for (const stock of STOCKS) {
-            // const response = await fetch(`https://api.iex.cloud/v1/stock/${stock}/quote`);
-            // const data = await response.json();
-            this.stocks[stock] = {
-                name: 'Datadog',
-                stockName: stock,
-                currentPrice: 134.23,
-                dayChangePercent: -1.24,
-                hourlyHistory: [120, 130],
-            };
+            this.stocks[stock] = (data as any)[stock] as any;
         }
         return;
     }
@@ -69,9 +90,17 @@ class StockData implements Data {
             payload.writeUInt8(stock.hourlyHistory.length, 14);
             // we have 13 bytes remaining, we encode each hour as 5 bits, so we can encode the last 20 hours.
             const max = Math.max(...stock.hourlyHistory);
-            for (let i = 0; i < stock.hourlyHistory.length; i++) {
-                const price = stock.hourlyHistory[i];
-                payload.writeUInt8(Math.floor(price / max * 32), 15 + i);
+            let bitPos = 0;
+            for (const price of stock.hourlyHistory) {
+                let normalized = Math.floor(price / max * 32);
+                for (let i = 0; i < 5; i++, bitPos++) {
+                    if (normalized & 1) {
+                        const byteIndex = bitPos >> 3;
+                        const bitIndex = bitPos & 7;
+                        payload[byteIndex + 15] |= 1 << bitIndex;
+                    }
+                    normalized >>= 1;
+                }
             }
             payloads.push(payload);
         }
@@ -81,53 +110,134 @@ class StockData implements Data {
 }
 
 class MetroData implements Data {
-    private lines: Record<typeof METRO_LINES[number], {
+    private lines: Record<keyof typeof METRO_LINES, {
         name: string;
-        incident: boolean;
+        incident: false;
+    } | {
+        name: string;
+        incident: true;
+        message: string;
     }> = {} as any;
 
     constructor() { }
 
-    async fetch(): Promise<void> {
-        const response = await fetch('https://prim.iledefrance-mobilites.fr/marketplace/v2/navitia/line_reports', {
-            headers: {
-                'Content-Type': 'application/json',
-                'apikey': PRIM_API_KEY,
-            },
-        });
-        if (!response.ok) {
-            throw new Error(`Failed to fetch metro data: ${response.statusText}`);
+    async makeCall() {
+        if (MOCK_API_CALLS) {
+            return {
+                '9': {
+                    disruptions: [
+                        {
+                            messages: [
+                                {
+                                    text: "Métro 9 : Ajustement de l'intervalle entre les trains - Train stationne",
+                                    channel: {
+                                        content_type: "text/plain",
+                                        id: "d9dbc5a6-7a06-11e8-8b8c-005056a44da2",
+                                        name: "titre",
+                                        types: [
+                                            "title"
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                }
+            };
         }
-        const data = await response.json();
-        console.log(data);
+
+        const resp = {} as any;
+        for (const [line, id] of Object.entries(METRO_LINES)) {
+            const response = await fetch(`https://prim.iledefrance-mobilites.fr/marketplace/v2/navitia/line_reports/lines/${encodeURIComponent(id)}/line_reports?disable_geojson=true&filter_status%5B%5D=past`, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': PRIM_API_KEY,
+                },
+            });
+            if (!response.ok) {
+                throw new Error(`Failed to fetch metro data: ${response.statusText}`);
+            }
+
+            resp[line] = await response.json();
+        }
+
+        return resp;
+    }
+
+    async refresh(): Promise<void> {
+        const data = await this.makeCall();
+        let line: keyof typeof METRO_LINES;
+        for (line in METRO_LINES) {
+            if (line in data && 'disruptions' in data[line] && data[line].disruptions.length > 0) {
+                this.lines[line] = {
+                    name: line,
+                    incident: true,
+                    message: data[line].disruptions[0].messages.find((m: any) => m.channel.name == "titre").text,
+                }
+            } else {
+                this.lines[line] = {
+                    name: line,
+                    incident: false
+                };
+            }
+        }
     }
 
     serialize(): Buffer[] {
-        return [Buffer.alloc(32)];
+        const payloads = [];
+        for (const incidents of Object.values(this.lines).filter(l => l.incident)) {
+            const payload = Buffer.alloc(32);
+            payload.writeUint8(METRO_DATA_TYPE, 1);
+            payload.write(incidents.name, 2, 1, 'utf-8');
+            payload.write(incidents.message, 3, 'utf-8');
+            payloads.push(payload);
+        }
+
+        return payloads;
     }
 }
 
 class WeatherData implements Data {
     private weather: {
         temperature: number;
+        feelsLike: number;
         humidity: number;
         pressure: number;
+        sunset: number;
     } = null as any;
 
     constructor() { }
 
-    async fetch(): Promise<void> {
-        // use openweathermap api to fetch weather data for the city
-        const response = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=Paris,fr&appid=${OPENWEATHERMAP_API_KEY}`);
+    async makeCall() {
+        if (MOCK_API_CALLS) {
+            return {
+                main: {
+                    temp: 10,
+                    feels_like: 5,
+                    humidity: 56,
+                    pressure: 1000,
+                },
+                sys: {
+                    sunset: 1767110521,
+                }
+            };
+        }
+
+        const response = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${CITY}&appid=${OPENWEATHERMAP_API_KEY}`);
         if (!response.ok) {
             throw new Error(`Failed to fetch weather data: ${response.statusText}`);
         }
-        const data = await response.json();
-        console.log(data);
+        return await response.json();
+    }
+
+    async refresh(): Promise<void> {
+        const data = await this.makeCall();
         this.weather = {
-            temperature: data.main.temp,
+            temperature: data.main.temp - 273.15,
+            feelsLike: data.main.feels_like - 273.15,
             humidity: data.main.humidity,
             pressure: data.main.pressure,
+            sunset: data.sys.sunset,
         };
 
         return;
@@ -137,8 +247,10 @@ class WeatherData implements Data {
         const payload = Buffer.alloc(32);
         payload.writeUInt8(WEATHER_DATA_TYPE, 1);
         payload.writeFloatLE(this.weather.temperature, 2);
-        payload.writeFloatLE(this.weather.humidity, 6);
-        payload.writeFloatLE(this.weather.pressure, 10);
+        payload.writeFloatLE(this.weather.feelsLike, 6);
+        payload.writeFloatLE(this.weather.humidity, 10);
+        payload.writeFloatLE(this.weather.pressure, 14);
+        payload.writeUint32LE(this.weather.sunset, 18);
         return [payload];
     }
 }
@@ -147,7 +259,8 @@ async function getKeyboard(): Promise<hid.HID> {
     if (LOCAL_DEV) {
         return null as any;
     }
-    const devices = await hid.devicesAsync();
+    const devices = hid.devices();
+    console.log(devices);
     const keyboard = devices.find(device => device.vendorId == 0x8D1D && device.usage == 0x62 && device.usagePage == 0xFF61);
 
     if (!keyboard) {
@@ -160,15 +273,19 @@ async function getKeyboard(): Promise<hid.HID> {
 async function main() {
     const keyboard = await getKeyboard();
     const fetchers: Data[] = [
-        new StockData(),
-        // new MetroData(),
+        // new StockData(),
+        new MetroData(),
         new WeatherData()
     ];
 
     for (const fetcher of fetchers) {
-        await fetcher.fetch();
+        await fetcher.refresh();
         if (LOCAL_DEV) {
-            console.log(fetcher);
+            console.log(JSON.stringify(fetcher, null, 2));
+            const payload = fetcher.serialize();
+            for (const packet of payload) {
+                console.log(packet);
+            }
         } else {
             const payload = fetcher.serialize();
             for (const packet of payload) {

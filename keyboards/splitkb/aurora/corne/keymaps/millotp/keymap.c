@@ -8,17 +8,28 @@
 
 #ifdef OLED_ENABLE
 
+enum data_type {
+    STOCK_DATA_TYPE,
+    METRO_DATA_TYPE,
+    WEATHER_DATA_TYPE,
+};
+
 float current_stock_price = 0;
+int   last_received       = 0;
 
 void raw_hid_receive(uint8_t *data, uint8_t length) {
-    current_stock_price = data[0] / 100.0;
+    last_received = data[1];
 }
 
-bool oled_task_user(void) {    
+bool oled_task_user(void) {
     // Clear and redraw
     oled_clear();
     // draw the stock price
-    
+
+    char buf[6];
+    snprintf(buf, sizeof(buf), "%5d", last_received);
+    oled_write(buf, false);
+
     return false;
 }
 
