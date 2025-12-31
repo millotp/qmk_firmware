@@ -1,4 +1,4 @@
-import { PNG } from 'pngjs';
+import { PNG, type PNGWithMetadata } from 'pngjs';
 import fsp from 'fs/promises';
 import path from 'path';
 
@@ -8,6 +8,28 @@ function isOn(r: number, g: number, b: number): boolean {
     return grey >= 127;
 }
 
+function resizeImage(png: PNGWithMetadata, w: number): PNG {
+    const h = Math.round(w / png.width * png.height);
+    const resized = new PNG({ width: w, height: h });
+
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const sx = Math.floor((x / w) * png.width);
+            const sy = Math.floor((y / h) * png.height);
+
+            const si = (sy * png.width + sx) << 2;
+            const di = (y * w + x) << 2;
+
+            resized.data[di] = png.data[si];
+            resized.data[di + 1] = png.data[si + 1];
+            resized.data[di + 2] = png.data[si + 2];
+            resized.data[di + 3] = png.data[si + 3];
+        }
+    }
+
+    return resized;
+}
+
 async function convert() {
     const filename = process.argv[2];
     if (!filename) {
@@ -15,10 +37,10 @@ async function convert() {
     }
 
     const data = await fsp.readFile(filename);
-    const png = PNG.sync.read(data);
+    let png: PNG | PNGWithMetadata = PNG.sync.read(data);
 
     if (png.width > 32) {
-        throw new Error('please use an image with width <= 32 pixels');
+        png = resizeImage(png as any, 32);
     }
     if (png.height < 8) {
         throw new Error('please use an image with height >= 8 pixels');
