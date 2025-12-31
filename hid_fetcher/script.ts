@@ -277,8 +277,8 @@ class WeatherData implements Data {
                     speed: 3.5,
                 },
                 sys: {
-                    sunrise: 1717339200,
-                    sunset: 1717396800,
+                    sunrise: 1717396800,
+                    sunset: 1717339200,
                 }
             };
         }
@@ -319,8 +319,7 @@ class WeatherData implements Data {
         payload.writeUInt8(this.humidity, offset++);
         payload.writeUInt16BE(this.pressure, offset);
         offset += 2;
-        payload.writeUInt16BE(this.windSpeed, offset);
-        offset += 2;
+        payload.writeUInt8(this.windSpeed, offset++);
         payload.write(this.sunrise, offset, 5, 'ascii');
         offset += 5;
         payload.write(this.sunset, offset, 5, 'ascii');
