@@ -197,15 +197,14 @@ class MetroData implements Data {
     }
 }
 
-
-enum WeatherCondition {
-    CLEAR = 0,
-    CLOUDS = 1,
-    RAIN = 2,
-    STORM = 3,
-    SNOW = 4,
-    MIST = 5,
-}
+const WeatherCondition = {
+    CLEAR: 0,
+    CLOUDS: 1,
+    RAIN: 2,
+    STORM: 3,
+    SNOW: 4,
+    MIST: 5,
+} as const;
 
 interface OpenWeatherResponse {
     weather: Array<{
@@ -229,7 +228,7 @@ interface OpenWeatherResponse {
 }
 
 class WeatherData implements Data {
-    private condition: WeatherCondition = WeatherCondition.CLEAR;
+    private condition: number = WeatherCondition.CLEAR;
     private temperature: number = 0; // °C
     private feelsLike: number = 0;   // °C
     private humidity: number = 0;    // %
@@ -240,7 +239,7 @@ class WeatherData implements Data {
 
     constructor() { }
 
-    private mapWeatherCondition(weatherId: number): WeatherCondition {
+    private mapWeatherCondition(weatherId: number): number {
         if (weatherId >= 200 && weatherId < 300) return WeatherCondition.STORM;
         if (weatherId >= 300 && weatherId < 400) return WeatherCondition.RAIN;
         if (weatherId >= 500 && weatherId < 600) return WeatherCondition.RAIN;
@@ -269,7 +268,7 @@ class WeatherData implements Data {
                     }
                 ],
                 main: {
-                    temp: 12.5,
+                    temp: 14,
                     feels_like: 10.2,
                     humidity: 72,
                     pressure: 1013,
@@ -331,7 +330,7 @@ class WeatherData implements Data {
     }
 }
 
-async function getKeyboard(): Promise<hid.HID> {
+async function getKeyboard(): Promise<hid.HIDAsync> {
     if (LOCAL_DEV) {
         return null as any;
     }
@@ -342,7 +341,7 @@ async function getKeyboard(): Promise<hid.HID> {
         throw new Error('Keyboard not found');
     }
 
-    return new hid.HID(keyboard.path!);
+    return await hid.HIDAsync.open(keyboard.path!, { nonExclusive: true });
 }
 
 async function main() {
@@ -359,8 +358,15 @@ async function main() {
 
         const payload = fetcher.serialize();
         for (const packet of payload) {
-            console.log(packet);
-            keyboard.write(packet);
+            // console.log(packet);
+            // spam the packets for macos
+            if (process.platform === 'darwin') {
+                for (let i = 0; i < 5; i++) {
+                    await keyboard.write(packet);
+                }
+            } else {
+                await keyboard.write(packet);
+            }
         }
     }
 }
