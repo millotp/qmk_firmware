@@ -9,7 +9,7 @@ Each packet must be exactly 32 bytes long.
 */
 
 const LOCAL_DEV = false;
-const MOCK_API_CALLS = true;
+const MOCK_API_CALLS = false;
 
 const STOCKS = ['DDOG', 'AAPL'] as const;
 const METRO_LINES = {
@@ -268,8 +268,8 @@ class WeatherData implements Data {
                     }
                 ],
                 main: {
-                    temp: 14,
-                    feels_like: 10.2,
+                    temp: 280,
+                    feels_like: 275,
                     humidity: 72,
                     pressure: 1013,
                 },
@@ -295,8 +295,8 @@ class WeatherData implements Data {
     async refresh(): Promise<void> {
         const data = await this.makeCall();
         this.condition = this.mapWeatherCondition(data.weather[0]?.id || 800);
-        this.temperature = Math.round(data.main.temp);
-        this.feelsLike = Math.round(data.main.feels_like);
+        this.temperature = Math.round(data.main.temp - 273.15);
+        this.feelsLike = Math.round(data.main.feels_like - 273.15);
         this.humidity = data.main.humidity;
         this.pressure = Math.round(data.main.pressure);
         this.windSpeed = Math.round(data.wind.speed);
