@@ -197,61 +197,136 @@ class MetroData implements Data {
     }
 }
 
-class WeatherData implements Data {
-    private weather: {
-        temperature: number;
-        feelsLike: number;
-        humidity: number;
+
+enum WeatherCondition {
+    CLEAR = 0,
+    CLOUDS = 1,
+    RAIN = 2,
+    STORM = 3,
+    SNOW = 4,
+    MIST = 5,
+}
+
+interface OpenWeatherResponse {
+    weather: Array<{
+        id: number;
+        main: string;
+        description: string;
+    }>;
+    main: {
+        temp: number;
+        feels_like: number;
         pressure: number;
+        humidity: number;
+    };
+    wind: {
+        speed: number;
+    };
+    sys: {
+        sunrise: number;
         sunset: number;
-    } = null as any;
+    };
+}
+
+class WeatherData implements Data {
+    private condition: WeatherCondition = WeatherCondition.CLEAR;
+    private temperature: number = 0; // °C
+    private feelsLike: number = 0;   // °C
+    private humidity: number = 0;    // %
+    private pressure: number = 0;    // hPa
+    private windSpeed: number = 0;   // m/s
+    private sunrise: string = '00:00';
+    private sunset: string = '00:00';
 
     constructor() { }
 
-    async makeCall() {
+    private mapWeatherCondition(weatherId: number): WeatherCondition {
+        if (weatherId >= 200 && weatherId < 300) return WeatherCondition.STORM;
+        if (weatherId >= 300 && weatherId < 400) return WeatherCondition.RAIN;
+        if (weatherId >= 500 && weatherId < 600) return WeatherCondition.RAIN;
+        if (weatherId >= 600 && weatherId < 700) return WeatherCondition.SNOW;
+        if (weatherId >= 700 && weatherId < 800) return WeatherCondition.MIST;
+        if (weatherId === 800) return WeatherCondition.CLEAR;
+        if (weatherId > 800) return WeatherCondition.CLOUDS;
+        return WeatherCondition.CLEAR;
+    }
+
+    private formatTime(unixTimestamp: number): string {
+        const date = new Date(unixTimestamp * 1000);
+        const hours = date.getHours().toString().padStart(2, '0');
+        const minutes = date.getMinutes().toString().padStart(2, '0');
+        return `${hours}:${minutes}`;
+    }
+
+    async makeCall(): Promise<OpenWeatherResponse> {
         if (MOCK_API_CALLS) {
             return {
+                weather: [
+                    {
+                        id: 800,
+                        main: 'Clear',
+                        description: 'clear sky',
+                    }
+                ],
                 main: {
-                    temp: 280,
-                    feels_like: 275,
-                    humidity: 56,
-                    pressure: 1000,
+                    temp: 12.5,
+                    feels_like: 10.2,
+                    humidity: 72,
+                    pressure: 1013,
+                },
+                wind: {
+                    speed: 3.5,
                 },
                 sys: {
-                    sunset: 1767110521,
+                    sunrise: 1717339200,
+                    sunset: 1717396800,
                 }
             };
         }
 
-        const response = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${CITY}&appid=${OPENWEATHERMAP_API_KEY}`);
+        const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(CITY)}&appid=${OPENWEATHERMAP_API_KEY}&units=metrics`;
+        const response = await fetch(url);
         if (!response.ok) {
-            throw new Error(`Failed to fetch weather data: ${response.statusText}`);
+            throw new Error(`Weather API error: ${response.status}`);
         }
+
         return await response.json();
     }
 
     async refresh(): Promise<void> {
         const data = await this.makeCall();
-        this.weather = {
-            temperature: data.main.temp - 273.15,
-            feelsLike: data.main.feels_like - 273.15,
-            humidity: data.main.humidity,
-            pressure: data.main.pressure,
-            sunset: data.sys.sunset,
-        };
-
-        return;
+        this.condition = this.mapWeatherCondition(data.weather[0]?.id || 800);
+        this.temperature = Math.round(data.main.temp);
+        this.feelsLike = Math.round(data.main.feels_like);
+        this.humidity = data.main.humidity;
+        this.pressure = Math.round(data.main.pressure);
+        this.windSpeed = Math.round(data.wind.speed);
+        this.sunrise = this.formatTime(data.sys.sunrise);
+        this.sunset = this.formatTime(data.sys.sunset);
     }
 
     serialize(): Buffer[] {
         const payload = Buffer.alloc(32);
-        payload.writeUInt8(WEATHER_DATA_TYPE, 1);
-        payload.writeInt16BE(Math.round(this.weather.temperature), 2);
-        payload.writeInt16BE(Math.round(this.weather.feelsLike), 4);
-        payload.writeUInt8(this.weather.humidity, 6);
-        payload.writeUInt16BE(this.weather.pressure, 7);
-        const sunset = new Date(this.weather.sunset * 1000);
-        payload.write(`${String(sunset.getHours()).padStart(2, '0')}:${String(sunset.getMinutes()).padStart(2, '0')}`, 9);
+        let offset = 0;
+
+        // Byte 0: Report ID (ignored by QMK)
+        payload.writeUInt8(0x00, offset++);
+        payload.writeUInt8(WEATHER_DATA_TYPE, offset++);
+        payload.writeUInt8(this.condition, offset++);
+        payload.writeInt16BE(this.temperature, offset);
+        offset += 2;
+        payload.writeInt16BE(this.feelsLike, offset);
+        offset += 2;
+        payload.writeUInt8(this.humidity, offset++);
+        payload.writeUInt16BE(this.pressure, offset);
+        offset += 2;
+        payload.writeUInt16BE(this.windSpeed, offset);
+        offset += 2;
+        payload.write(this.sunrise, offset, 5, 'ascii');
+        offset += 5;
+        payload.write(this.sunset, offset, 5, 'ascii');
+        offset += 5;
+
         return [payload];
     }
 }
@@ -260,7 +335,7 @@ async function getKeyboard(): Promise<hid.HID> {
     if (LOCAL_DEV) {
         return null as any;
     }
-    const devices = hid.devices();
+    const devices = await hid.devicesAsync();
     const keyboard = devices.find(device => device.vendorId == 0x8D1D && device.usage == 0x62 && device.usagePage == 0xFF61);
 
     if (!keyboard) {
