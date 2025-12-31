@@ -2,12 +2,14 @@
   "name": "hid_fetcher",
   "type": "module",
   "scripts": {
-    "start" : "/mnt/c/Program\\ Files/nodejs/node.exe \"$(wslpath -w script.ts)\""
+    "start": "/mnt/c/Program\\ Files/nodejs/node.exe \"$(wslpath -w script.ts)\""
   },
   "dependencies": {
     "@types/node": "^25.0.3",
+    "@types/pngjs": "^6.0.5",
     "dotenv": "^17.2.3",
-    "node-hid": "^3.2.0"
+    "node-hid": "^3.2.0",
+    "pngjs": "^7.0.0"
   },
   "packageManager": "yarn@4.12.0"
 }

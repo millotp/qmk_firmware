@@ -52,12 +52,21 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/node@npm:^25.0.3":
+"@types/node@npm:*, @types/node@npm:^25.0.3":
   version: 25.0.3
   resolution: "@types/node@npm:25.0.3"
   dependencies:
     undici-types: "npm:~7.16.0"
   checksum: 10c0/b7568f0d765d9469621615e2bb257c7fd1953d95e9acbdb58dffb6627a2c4150d405a4600aa1ad8a40182a94fe5f903cafd3c0a2f5132814debd0e3bfd61f835
+  languageName: node
+  linkType: hard
+
+"@types/pngjs@npm:^6.0.5":
+  version: 6.0.5
+  resolution: "@types/pngjs@npm:6.0.5"
+  dependencies:
+    "@types/node": "npm:*"
+  checksum: 10c0/11979d0690e774046d3a1e8cfc613a6b53a613909d81c93831cf253800e93ba1a2d47950979b523aebd4fc023351b644d7f4aa2dfcc027c70816a2968420e7da
   languageName: node
   linkType: hard
 
@@ -258,8 +267,10 @@ __metadata:
   resolution: "hid_fetcher@workspace:."
   dependencies:
     "@types/node": "npm:^25.0.3"
+    "@types/pngjs": "npm:^6.0.5"
     dotenv: "npm:^17.2.3"
     node-hid: "npm:^3.2.0"
+    pngjs: "npm:^7.0.0"
   languageName: unknown
   linkType: soft
 
@@ -538,6 +549,13 @@ __metadata:
     pkg-prebuilds-copy: bin/copy.mjs
     pkg-prebuilds-verify: bin/verify.mjs
   checksum: 10c0/a955b097d3693216c06015fe03ae5866da5f1d2ec6a75971194e3cf5c342e1fdde27786bf0cce85814183cd98aecaf732ae1373fc2389a576daca2f3375661ae
+  languageName: node
+  linkType: hard
+
+"pngjs@npm:^7.0.0":
+  version: 7.0.0
+  resolution: "pngjs@npm:7.0.0"
+  checksum: 10c0/0d4c7a0fd476a9c33df7d0a2a73e1d56537628a668841f6995c2bca070cf30819f9254a64363266bc14ef2fee47659dd3b4f2b18eec7ab65143015139f497b38
   languageName: node
   linkType: hard
 

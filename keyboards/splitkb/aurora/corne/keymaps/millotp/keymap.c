@@ -81,10 +81,7 @@ bool oled_task_user(void) {
     oled_write("sun  ", false);
     oled_write(sunset, false);
 
-    oled_write_raw_P(datadog_logo_large, sizeof(datadog_logo_large));
-
-    oled_set_cursor(0, 13);
-    oled_write_raw_P(datadog_logo_framed, sizeof(datadog_logo_framed));
+    oled_write_raw_P(datadog_logo, sizeof(datadog_logo));
 
     return false;
 }
