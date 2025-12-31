@@ -81,7 +81,31 @@ bool oled_task_user(void) {
     oled_write("sun  ", false);
     oled_write(sunset, false);
 
-    oled_write_raw_P(datadog_logo, sizeof(datadog_logo));
+    // oled_write_raw_P(datadog_logo, sizeof(datadog_logo));
+    static const char PROGMEM sun[] = {
+        0x20, 0x80, 0x81, 0x82, 0x20,
+        0x20, 0xA0, 0xA1, 0xA2, 0x20, 0
+    };
+    oled_write_P(sun, false);
+
+    static const char PROGMEM cloudy[] = {
+        0x20, 0x83, 0x84, 0x85, 0x20,
+        0x20, 0xA3, 0xA4, 0xA5, 0x20, 0
+    };
+    oled_write_P(cloudy, false);
+
+    static const char PROGMEM rain[] = {
+        0x20, 0x86, 0x87, 0x88, 0x20,
+        0x20, 0xA6, 0xA7, 0xA8, 0x20, 0
+    };
+    oled_write_P(rain, false);
+
+    static const char PROGMEM storm[] = {
+        0x20, 0x89, 0x8A, 0x8B, 0x20,
+        0x20, 0xA9, 0xAA, 0xAB, 0x20, 0
+    };
+    oled_write_P(storm, false);
+    
 
     return false;
 }
