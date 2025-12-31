@@ -85,8 +85,8 @@ class StockData implements Data {
             payload.writeUInt8(STOCK_DATA_TYPE, 1); // stock data type
             // stock name is always 4 char
             payload.write(stock.stockName, 2, 4, 'utf8');
-            payload.writeFloatLE(stock.currentPrice, 6);
-            payload.writeFloatLE(stock.dayChangePercent, 10);
+            payload.writeInt32BE(Math.round(stock.currentPrice * 100), 6);
+            payload.writeInt32BE(Math.round(stock.dayChangePercent * 100), 10);
             payload.writeUInt8(stock.hourlyHistory.length, 14);
             // we have 13 bytes remaining, we encode each hour as 5 bits, so we can encode the last 20 hours.
             const max = Math.max(...stock.hourlyHistory);
@@ -189,7 +189,7 @@ class MetroData implements Data {
             const payload = Buffer.alloc(32);
             payload.writeUint8(METRO_DATA_TYPE, 1);
             payload.write(incidents.name, 2, 1, 'utf-8');
-            payload.write(incidents.message, 3, 'utf-8');
+            payload.write(incidents.message, 3, 29, 'utf-8');
             payloads.push(payload);
         }
 
@@ -212,8 +212,8 @@ class WeatherData implements Data {
         if (MOCK_API_CALLS) {
             return {
                 main: {
-                    temp: 10,
-                    feels_like: 5,
+                    temp: 280,
+                    feels_like: 275,
                     humidity: 56,
                     pressure: 1000,
                 },
@@ -246,11 +246,12 @@ class WeatherData implements Data {
     serialize(): Buffer[] {
         const payload = Buffer.alloc(32);
         payload.writeUInt8(WEATHER_DATA_TYPE, 1);
-        payload.writeFloatLE(this.weather.temperature, 2);
-        payload.writeFloatLE(this.weather.feelsLike, 6);
-        payload.writeFloatLE(this.weather.humidity, 10);
-        payload.writeFloatLE(this.weather.pressure, 14);
-        payload.writeUint32LE(this.weather.sunset, 18);
+        payload.writeInt16BE(Math.round(this.weather.temperature), 2);
+        payload.writeInt16BE(Math.round(this.weather.feelsLike), 4);
+        payload.writeUInt8(this.weather.humidity, 6);
+        payload.writeUInt16BE(this.weather.pressure, 7);
+        const sunset = new Date(this.weather.sunset * 1000);
+        payload.write(`${String(sunset.getHours()).padStart(2, '0')}:${String(sunset.getMinutes()).padStart(2, '0')}`, 9);
         return [payload];
     }
 }
@@ -260,7 +261,6 @@ async function getKeyboard(): Promise<hid.HID> {
         return null as any;
     }
     const devices = hid.devices();
-    console.log(devices);
     const keyboard = devices.find(device => device.vendorId == 0x8D1D && device.usage == 0x62 && device.usagePage == 0xFF61);
 
     if (!keyboard) {
@@ -274,23 +274,18 @@ async function main() {
     const keyboard = await getKeyboard();
     const fetchers: Data[] = [
         // new StockData(),
-        new MetroData(),
+        // new MetroData(),
         new WeatherData()
     ];
 
     for (const fetcher of fetchers) {
         await fetcher.refresh();
-        if (LOCAL_DEV) {
-            console.log(JSON.stringify(fetcher, null, 2));
-            const payload = fetcher.serialize();
-            for (const packet of payload) {
-                console.log(packet);
-            }
-        } else {
-            const payload = fetcher.serialize();
-            for (const packet of payload) {
-                keyboard.write(packet);
-            }
+        console.log(JSON.stringify(fetcher, null, 2));
+
+        const payload = fetcher.serialize();
+        for (const packet of payload) {
+            console.log(packet);
+            keyboard.write(packet);
         }
     }
 }

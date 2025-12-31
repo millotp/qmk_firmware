@@ -1,6 +1,9 @@
 {
   "name": "hid_fetcher",
   "type": "module",
+  "scripts": {
+    "start" : "/mnt/c/Program\\ Files/nodejs/node.exe \"$(wslpath -w script.ts)\""
+  },
   "dependencies": {
     "@types/node": "^25.0.3",
     "dotenv": "^17.2.3",
