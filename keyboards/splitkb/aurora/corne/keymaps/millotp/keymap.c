@@ -150,9 +150,10 @@ static void render_master(void) {
     render_weather_icon(weather_data.condition);
 
     // Line 2: Spacer (empty)
+    oled_set_cursor(0, 2);
+    oled_advance_page(true);
 
     // Line 3: Temperature
-    oled_set_cursor(0, 3);
     snprintf(buf, sizeof(buf), "%3d", weather_data.temperature);
     oled_write(buf, false);
     oled_write_raw_P(degree, sizeof(degree));
@@ -168,22 +169,26 @@ static void render_master(void) {
     snprintf(buf, sizeof(buf), "%3d%%", weather_data.humidity);
     oled_write(buf, false);
 
-    // Line 6: Spacer
-
-    // Line 7: Wind speed (value)
-    oled_set_cursor(0, 7);
-    snprintf(buf, sizeof(buf), "%2d ms", weather_data.wind_speed);
-    oled_write(buf, false);
-
-    // Line 8-9-10: Spacer
-
-    // Line 11: Pressure
-    oled_set_cursor(0, 11);
+    // Line 6: Pressure
+    oled_set_cursor(0, 6);
     snprintf(buf, sizeof(buf), "%4d", weather_data.pressure);
     oled_write(buf, false);
     oled_write_raw_P(hp, sizeof(hp));
 
-    // Line 12-13: Spacer
+    // Line 7: Spacer
+    oled_set_cursor(0, 7);
+    oled_advance_page(true);
+
+    // Line 8: Wind speed
+    snprintf(buf, sizeof(buf), "%2dm/s", weather_data.wind_speed);
+    oled_write(buf, false);
+
+    // Line 9-13: Spacer
+    oled_advance_page(true);
+    oled_advance_page(true);
+    oled_advance_page(true);
+    oled_advance_page(true);
+    oled_advance_page(true);
 
     // Line 14: Sunrise time
     oled_set_cursor(0, 14);
@@ -206,7 +211,8 @@ static void render_slave(void) {
 }
 
 bool oled_task_user(void) {
-    oled_clear();
+    // this breaks the automatic oled timeout
+    // oled_clear();
 
     if (is_keyboard_master()) {
         render_master();
