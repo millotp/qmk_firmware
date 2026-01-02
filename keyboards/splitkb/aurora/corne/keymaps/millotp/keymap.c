@@ -139,10 +139,8 @@ static void render_master(void) {
         // Show placeholder when no data received
         oled_set_cursor(0, 0);
         oled_write("await", false);
-        oled_set_cursor(0, 1);
-        oled_write(" HID ", false);
-        oled_set_cursor(0, 2);
-        oled_write(" data", false);
+        oled_write_ln("HID", false);
+        oled_write("data", false);
         return;
     }
 
@@ -167,10 +165,9 @@ static void render_master(void) {
     // Line 5: Humidity
     oled_set_cursor(0, 5);
     snprintf(buf, sizeof(buf), "%3d%%", weather_data.humidity);
-    oled_write(buf, false);
+    oled_write_ln(buf, false);
 
     // Line 6: Pressure
-    oled_set_cursor(0, 6);
     snprintf(buf, sizeof(buf), "%4d", weather_data.pressure);
     oled_write(buf, false);
     oled_write_raw_P(hp, sizeof(hp));
@@ -191,11 +188,9 @@ static void render_master(void) {
     oled_advance_page(true);
 
     // Line 14: Sunrise time
-    oled_set_cursor(0, 14);
     oled_write(weather_data.sunrise, false);
 
     // Line 15: Sunset time with sun-down indicator
-    oled_set_cursor(0, 15);
     oled_write(weather_data.sunset, false);
 }
 
