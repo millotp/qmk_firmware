@@ -126,9 +126,3 @@ compile_commands.json
 via*.json
 /keyboards/**/keymaps/via/*
 /keyboards/**/keymaps/vial/*
-
-node_modules/
-.env
-hid_fetcher/.yarn/*
-!hid_fetcher/.yarn/releases
-!hid_fetcher/logos/*.png

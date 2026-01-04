@@ -9,7 +9,8 @@
     "@types/pngjs": "^6.0.5",
     "dotenv": "^17.2.3",
     "node-hid": "^3.2.0",
-    "pngjs": "^7.0.0"
+    "pngjs": "^7.0.0",
+    "winston": "^3.19.0"
   },
   "packageManager": "yarn@4.12.0"
 }

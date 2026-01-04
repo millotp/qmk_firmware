@@ -1,7 +1,28 @@
 import hid from 'node-hid';
 import dotenv from 'dotenv';
+import { createLogger, format, transports } from 'winston';
 
 dotenv.config({ quiet: true });
+
+const { timestamp, printf } = format;
+const logFormat = printf(({ timestamp, level, message }) => {
+    return `${timestamp} [${level.toUpperCase()}] ${message}`;
+});
+
+const logger = createLogger({
+    level: 'debug',
+    format: format.combine(
+        timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+        logFormat
+    ),
+    defaultMeta: {
+        service: 'hid-fetcher',
+    },
+    transports: [
+        new transports.Console(),
+        new transports.File({ filename: 'logs.txt' }),
+    ]
+});
 
 /*
 Script that fetches data from different sources and sends it to the keyboard using HID.
@@ -9,7 +30,7 @@ Each packet must be exactly 32 bytes long.
 */
 
 const LOCAL_DEV = false;
-const MOCK_API_CALLS = false;
+const MOCK_API_CALLS = true;
 
 const STOCKS = ['DDOG', 'AAPL'] as const;
 const METRO_LINES = {
@@ -26,9 +47,13 @@ if (!OPENWEATHERMAP_API_KEY || !PRIM_API_KEY) {
     throw new Error('.env is not set');
 }
 
-const STOCK_DATA_TYPE = 1;
-const METRO_DATA_TYPE = 2;
-const WEATHER_DATA_TYPE = 3;
+const DATA_TYPE = {
+    STOCK: 1,
+    METRO: 2,
+    METRO_MESSAGE_1: 3,
+    METRO_MESSAGE_2: 4,
+    WEATHER: 5,
+};
 
 interface Data {
     refresh(): Promise<void>;
@@ -82,7 +107,7 @@ class StockData implements Data {
         for (const stock of Object.values(this.stocks)) {
             const payload = Buffer.alloc(32);
             // first byte is ignored
-            payload.writeUInt8(STOCK_DATA_TYPE, 1); // stock data type
+            payload.writeUInt8(DATA_TYPE.STOCK, 1); // stock data type
             // stock name is always 4 char
             payload.write(stock.stockName, 2, 4, 'utf8');
             payload.writeInt32BE(Math.round(stock.currentPrice * 100), 6);
@@ -164,6 +189,14 @@ class MetroData implements Data {
         return resp;
     }
 
+    findMessage(data: any): string {
+        // only select relevant info, and remove accents
+        const message = data.disruptions[0].messages.find((m: any) => m.channel.name == "titre").text.normalize("NFD").replace(/\p{Diacritic}/gu, "");
+        if (message.includes(' : '))
+            return message.split(' : ')[1]
+        return message;
+    }
+
     async refresh(): Promise<void> {
         const data = await this.makeCall();
         let line: keyof typeof METRO_LINES;
@@ -172,7 +205,7 @@ class MetroData implements Data {
                 this.lines[line] = {
                     name: line,
                     incident: true,
-                    message: data[line].disruptions[0].messages.find((m: any) => m.channel.name == "titre").text,
+                    message: this.findMessage(data[line]),
                 }
             } else {
                 this.lines[line] = {
@@ -187,10 +220,26 @@ class MetroData implements Data {
         const payloads = [];
         for (const incidents of Object.values(this.lines).filter(l => l.incident)) {
             const payload = Buffer.alloc(32);
-            payload.writeUint8(METRO_DATA_TYPE, 1);
+            payload.writeUint8(DATA_TYPE.METRO, 1);
             payload.write(incidents.name, 2, 1, 'utf-8');
             payload.write(incidents.message, 3, 29, 'utf-8');
             payloads.push(payload);
+
+            if (incidents.message.length > 29) {
+                const message = Buffer.alloc(32);
+                message.writeUint8(DATA_TYPE.METRO_MESSAGE_1, 1);
+                message.write(incidents.name, 2, 1, 'utf-8');
+                message.write(incidents.message.slice(29), 3, 29, 'utf-8');
+                payloads.push(message);
+            }
+
+            if (incidents.message.length > 29 * 2) {
+                const message = Buffer.alloc(32);
+                message.writeUint8(DATA_TYPE.METRO_MESSAGE_2, 1);
+                message.write(incidents.name, 2, 1, 'utf-8');
+                message.write(incidents.message.slice(29 * 2), 3, 29, 'utf-8');
+                payloads.push(message);
+            }
         }
 
         return payloads;
@@ -310,7 +359,7 @@ class WeatherData implements Data {
 
         // Byte 0: Report ID (ignored by QMK)
         payload.writeUInt8(0x00, offset++);
-        payload.writeUInt8(WEATHER_DATA_TYPE, offset++);
+        payload.writeUInt8(DATA_TYPE.WEATHER, offset++);
         payload.writeUInt8(this.condition, offset++);
         payload.writeInt16BE(this.temperature, offset);
         offset += 2;
@@ -334,30 +383,68 @@ async function getKeyboard(): Promise<hid.HIDAsync> {
         return null as any;
     }
     const devices = await hid.devicesAsync();
-    const keyboard = devices.find(device => device.vendorId == 0x8D1D && device.usage == 0x62 && device.usagePage == 0xFF61);
+    const kb = devices.find(device => device.vendorId == 0x8D1D && device.usage == 0x62 && device.usagePage == 0xFF61);
 
-    if (!keyboard) {
+    if (!kb) {
         throw new Error('Keyboard not found');
     }
 
-    return await hid.HIDAsync.open(keyboard.path!, { nonExclusive: true });
+    return await hid.HIDAsync.open(kb.path!, { nonExclusive: true });
 }
 
-async function main() {
-    const keyboard = await getKeyboard();
-    const fetchers: Data[] = [
-        // new StockData(),
-        // new MetroData(),
-        new WeatherData()
-    ];
+async function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+let keyboard: hid.HIDAsync | null;
+let lastHeartbeat = Date.now();
+
+const fetchers: Data[] = [
+    // new StockData(),
+    new MetroData(),
+    new WeatherData()
+];
+
+function attachHooks() {
+    if (!keyboard) {
+        throw new Error('tried to attach hooks before finding the keyboard');
+    }
+
+    keyboard.on('data', (data) => {
+        if (data[1] == 1) {
+            lastHeartbeat = Date.now();
+        }
+    });
+
+    keyboard.on('error', async () => {
+        // happens when the keyboard is disconnected.
+        // wait for a bit, then try to reconnect.
+        logger.info('keyboard disconnected, retrying in a few seconds');
+
+        if (keyboard) {
+            keyboard.close();
+            keyboard.removeAllListeners();
+            keyboard = null;
+        }
+
+        await sleep(10 * 1000);
+        await waitForKeyboard();
+    });
+}
+
+
+
+async function refreshAndSend() {
+    if (!keyboard) {
+        return;
+    }
 
     for (const fetcher of fetchers) {
         await fetcher.refresh();
-        console.log(JSON.stringify(fetcher, null, 2));
+        logger.debug(JSON.stringify(fetcher, null, 2));
 
         const payload = fetcher.serialize();
         for (const packet of payload) {
-            // console.log(packet);
             // spam the packets for macos
             if (process.platform === 'darwin') {
                 for (let i = 0; i < 5; i++) {
@@ -370,4 +457,46 @@ async function main() {
     }
 }
 
-main();
+async function waitForKeyboard(): Promise<void> {
+    while (true) {
+        if (keyboard) {
+            // keyboard is already set
+            return;
+        }
+        try {
+            keyboard = await getKeyboard();
+            logger.info(`keyboard found, sending data`);
+            attachHooks();
+            refreshAndSend();
+            return;
+        } catch (err) {
+            // ignore errors
+        }
+
+        await sleep(3 * 60 * 1000);
+    }
+}
+
+async function main() {
+    await waitForKeyboard();
+
+    while (true) {
+        // sleep for 10 minutes
+        await sleep(10 * 60 * 1000);
+
+        if (Date.now() - lastHeartbeat > 10 * 60 * 1000) {
+            logger.debug("keyboard is inactive, skip refresh");
+            await sleep(1 * 60 * 1000);
+
+            continue;
+        }
+
+        await refreshAndSend();
+    }
+}
+
+try {
+    await main();
+} catch (err) {
+    logger.error(err);
+}

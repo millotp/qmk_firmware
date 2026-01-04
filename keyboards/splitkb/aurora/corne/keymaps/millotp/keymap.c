@@ -25,6 +25,12 @@
 
 #include QMK_KEYBOARD_H
 #include "logos.h"
+#include "raw_hid.h"
+#include "transactions.h"
+
+enum my_keycodes {
+    SHOW_METRO = SAFE_RANGE,
+};
 
 #ifdef OLED_ENABLE
 
@@ -33,6 +39,8 @@ enum data_type {
     INVALID,
     STOCK_DATA_TYPE,
     METRO_DATA_TYPE,
+    METRO_MESSAGE_1_DATA_TYPE,
+    METRO_MESSAGE_2_DATA_TYPE,
     WEATHER_DATA_TYPE,
 };
 
@@ -59,10 +67,13 @@ static struct {
     bool     valid;       // data received flag
 } weather_data = {0};
 
-// Metro data
-uint32_t last_metro_update = 0;
-char     impacted_metro    = '0';
-char     message[30]       = {0};
+static struct {
+    uint32_t last_update;
+    char     impacted_line;
+    char     message[29 * 3 + 1];
+} metro_data = {0};
+
+bool show_metro_message = false;
 
 void raw_hid_receive(uint8_t *data, uint8_t length) {
     // data[0] is the actual first byte (report ID is stripped)
@@ -73,9 +84,15 @@ void raw_hid_receive(uint8_t *data, uint8_t length) {
         case STOCK_DATA_TYPE:
             break;
         case METRO_DATA_TYPE:
-            last_metro_update = timer_read32();
-            impacted_metro    = data[1];
-            strncpy(message, (char *)data + 2, sizeof(message) - 1);
+            metro_data.last_update   = timer_read32();
+            metro_data.impacted_line = data[1];
+            strncpy(metro_data.message, (char *)data + 2, 29);
+            break;
+        case METRO_MESSAGE_1_DATA_TYPE:
+            strncpy(metro_data.message + 29, (char *)data + 2, 29);
+            break;
+        case METRO_MESSAGE_2_DATA_TYPE:
+            strncpy(metro_data.message + 29 * 2, (char *)data + 2, 29);
             break;
         case WEATHER_DATA_TYPE:
             weather_data.condition   = data[1];
@@ -89,16 +106,28 @@ void raw_hid_receive(uint8_t *data, uint8_t length) {
             weather_data.valid = true;
             break;
     }
+
+    if (is_keyboard_master()) {
+        // forward the data to the slave
+        transaction_rpc_send(HID_DATA_IN, length, data);
+    }
+}
+
+bool metro_has_incident(void) {
+    return timer_read32() - metro_data.last_update < 10 * 60 * 1000;
 }
 
 // Weather icons (3 chars wide x 2 rows tall)
 // Characters from glcdfont.c: 0x80-0x91 (top) and 0xA0-0xB1 (bottom)
 static const char PROGMEM icon_sun[]    = {0x20, 0x80, 0x81, 0x82, 0x20, 0x20, 0xA0, 0xA1, 0xA2, 0x20, 0};
 static const char PROGMEM icon_cloudy[] = {0x20, 0x83, 0x84, 0x85, 0x20, 0x20, 0xA3, 0xA4, 0xA5, 0x20, 0};
-static const char PROGMEM icon_rain[]   = {0x20, 0x86, 0x87, 0x88, 0x20, 0x20, 0xA6, 0xA7, 0xA8, 0x20, 0};
+static const char PROGMEM icon_rainy[]  = {0x20, 0x86, 0x87, 0x88, 0x20, 0x20, 0xA6, 0xA7, 0xA8, 0x20, 0};
 static const char PROGMEM icon_storm[]  = {0x20, 0x89, 0x8A, 0x8B, 0x20, 0x20, 0xA9, 0xAA, 0xAB, 0x20, 0};
 static const char PROGMEM icon_snow[]   = {0x20, 0x8C, 0x8D, 0x8E, 0x20, 0x20, 0xAC, 0xAD, 0xAE, 0x20, 0};
 static const char PROGMEM icon_mist[]   = {0x20, 0x8F, 0x90, 0x91, 0x20, 0x20, 0xAF, 0xB0, 0xB1, 0x20, 0};
+static const char PROGMEM icon_line_6[] = {0x20, 0x92, 0x93, 0x94, 0x20, 0x20, 0xB2, 0xB3, 0xB4, 0x20, 0};
+static const char PROGMEM icon_line_8[] = {0x20, 0x95, 0x96, 0x97, 0x20, 0x20, 0xB5, 0xB6, 0xB7, 0x20, 0};
+static const char PROGMEM icon_line_9[] = {0x20, 0x98, 0x99, 0x9A, 0x20, 0x20, 0xB8, 0xB9, 0xBA, 0x20, 0};
 
 // raw char
 static const char PROGMEM degree[] = {0x02, 0x05, 0x02, 0x00, 0x3E, 0x41, 0x41, 0x22}; // °C
@@ -114,7 +143,7 @@ static void render_weather_icon(uint8_t condition) {
             oled_write_P(icon_cloudy, false);
             break;
         case WEATHER_RAIN:
-            oled_write_P(icon_rain, false);
+            oled_write_P(icon_rainy, false);
             break;
         case WEATHER_STORM:
             oled_write_P(icon_storm, false);
@@ -127,6 +156,21 @@ static void render_weather_icon(uint8_t condition) {
             break;
         default:
             oled_write_P(icon_sun, false);
+            break;
+    }
+}
+
+// Render metro line icon at current cursor position
+static void render_metro_line_icon(char line) {
+    switch (line) {
+        case '6':
+            oled_write_P(icon_line_6, false);
+            break;
+        case '8':
+            oled_write_P(icon_line_8, false);
+            break;
+        case '9':
+            oled_write_P(icon_line_9, false);
             break;
     }
 }
@@ -144,6 +188,11 @@ static void render_master(void) {
         return;
     }
 
+    if (show_metro_message && metro_has_incident()) {
+        oled_write(metro_data.message, false);
+        return;
+    }
+
     // Line 0-1: Weather icon (centered)
     render_weather_icon(weather_data.condition);
 
@@ -152,14 +201,16 @@ static void render_master(void) {
     oled_advance_page(true);
 
     // Line 3: Temperature
-    snprintf(buf, sizeof(buf), "%3d", weather_data.temperature);
+    snprintf(buf, sizeof(buf), "%3d  ", weather_data.temperature);
     oled_write(buf, false);
+    oled_set_cursor(3, 3);
     oled_write_raw_P(degree, sizeof(degree));
 
     // Line 4: Feels like
     oled_set_cursor(0, 4);
-    snprintf(buf, sizeof(buf), "%3d", weather_data.feels_like);
+    snprintf(buf, sizeof(buf), "%3d  ", weather_data.feels_like);
     oled_write(buf, false);
+    oled_set_cursor(3, 4);
     oled_write_raw_P(degree, sizeof(degree));
 
     // Line 5: Humidity
@@ -179,11 +230,18 @@ static void render_master(void) {
     // Line 8: Wind speed
     snprintf(buf, sizeof(buf), "%2dm/s", weather_data.wind_speed);
     oled_write(buf, false);
+    oled_advance_page(true);
 
-    // Line 9-13: Spacer
-    oled_advance_page(true);
-    oled_advance_page(true);
-    oled_advance_page(true);
+    if (metro_has_incident() && (timer_read32() / 2000) % 4 < 3) {
+        // blink the icon on line 10-11
+        render_metro_line_icon(metro_data.impacted_line);
+        oled_set_cursor(0, 12);
+    } else {
+        oled_advance_page(true);
+        oled_advance_page(true);
+    }
+
+    // Line 12-13: Spacer
     oled_advance_page(true);
     oled_advance_page(true);
 
@@ -195,15 +253,6 @@ static void render_master(void) {
 }
 
 // Render the slave (right) display - decorative aurora art
-static void render_slave(void) {
-    oled_write_raw_P(datadog_logo, sizeof(datadog_logo));
-    oled_set_cursor(0, 4);
-    oled_write_raw_P(datadog_logo, sizeof(datadog_logo));
-    oled_set_cursor(0, 8);
-    oled_write_raw_P(datadog_logo, sizeof(datadog_logo));
-    oled_set_cursor(0, 12);
-    oled_write_raw_P(datadog_logo, sizeof(datadog_logo));
-}
 
 bool oled_task_user(void) {
     // this breaks the automatic oled timeout
@@ -212,15 +261,38 @@ bool oled_task_user(void) {
     if (is_keyboard_master()) {
         render_master();
     } else {
-        render_slave();
+        render_master();
+        // render_slave();
     }
 
     return false;
 }
 
+uint32_t last_heartbeat = 0;
+
 // Handle keypresses (can be used for future interactivity)
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
+    if (timer_read32() - last_heartbeat > 5 * 60 * 1000) {
+        last_heartbeat = timer_read32();
+
+        // send a heartbeat to the host
+        uint8_t buf[32] = {0};
+        buf[1]          = 1;
+        raw_hid_send(buf, 32);
+    }
+
+    show_metro_message = record->event.pressed && keycode == SHOW_METRO;
+
     return true;
+}
+
+// Handle communication with the slave
+void user_hid_data_in_slave_handler(uint8_t in_buflen, const void *in_data, uint8_t out_buflen, void *out_data) {
+    raw_hid_receive((uint8_t *)in_data, in_buflen);
+}
+
+void keyboard_post_init_user(void) {
+    transaction_register_rpc(HID_DATA_IN, user_hid_data_in_slave_handler);
 }
 
 #endif // OLED_ENABLE

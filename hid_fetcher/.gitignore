@@ -1,0 +1,8 @@
+logs.txt
+node_modules
+.DS_Store
+.yarn/*
+!.yarn/releases
+.env
+logos
+icons
