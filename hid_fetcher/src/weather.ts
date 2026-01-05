@@ -1,9 +1,6 @@
 import { type Fetcher, DATA_TYPE, MOCK_API_CALLS } from "./fetcher.ts";
 
-const OPENWEATHERMAP_API_KEY = process.env.OPENWEATHERMAP_API_KEY!;
 const CITY = 'Paris,fr';
-
-
 
 const WeatherCondition = {
     CLEAR: 0,
@@ -45,7 +42,11 @@ export class WeatherData implements Fetcher {
     private sunrise: string = '00:00';
     private sunset: string = '00:00';
 
-    constructor() { }
+    #apiKey: string;
+
+    constructor(apiKey: string) {
+        this.#apiKey = apiKey;
+    }
 
     private mapWeatherCondition(weatherId: number): number {
         if (weatherId >= 200 && weatherId < 300) return WeatherCondition.STORM;
@@ -91,7 +92,7 @@ export class WeatherData implements Fetcher {
             };
         }
 
-        const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(CITY)}&appid=${OPENWEATHERMAP_API_KEY}&units=metrics`;
+        const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(CITY)}&appid=${this.#apiKey}&units=metrics`;
         const response = await fetch(url);
         if (!response.ok) {
             throw new Error(`Weather API error: ${response.status}`);

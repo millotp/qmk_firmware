@@ -4,18 +4,25 @@ Each packet must be exactly 32 bytes long.
 */
 
 import dotenv from 'dotenv';
-dotenv.config({ quiet: true });
-
 import { type Fetcher } from './fetcher.ts';
 import { MetroData } from './metro.ts';
 import { WeatherData } from './weather.ts';
 import { sleep } from './sleep.ts';
 import { logger } from './logger.ts';
 import { isKeyboardActive, sendToKeyboard, waitForKeyboard } from './keyboard.ts';
+import { StockData } from './stock.ts';
+
+dotenv.config({ quiet: true });
+
+const PRIM_API_KEY = process.env.PRIM_API_KEY!;
+const OPENWEATHERMAP_API_KEY = process.env.OPENWEATHERMAP_API_KEY!;
+const ALPACA_API_KEY = process.env.ALPACA_API_KEY!;
+const ALPACA_API_SECRET = process.env.ALPACA_API_SECRET!;
 
 const fetchers: Fetcher[] = [
-    new MetroData(),
-    new WeatherData(),
+    new MetroData(PRIM_API_KEY),
+    new WeatherData(OPENWEATHERMAP_API_KEY),
+    new StockData(ALPACA_API_KEY, ALPACA_API_SECRET),
 ]
 
 export async function refreshAndSend() {
@@ -59,4 +66,5 @@ try {
     await main();
 } catch (err) {
     logger.error(err);
+    process.exit(1);
 }

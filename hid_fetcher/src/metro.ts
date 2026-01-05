@@ -1,7 +1,5 @@
 import { type Fetcher, DATA_TYPE, MOCK_API_CALLS } from "./fetcher.ts";
 
-const PRIM_API_KEY = process.env.PRIM_API_KEY!;
-
 const METRO_LINES = {
     // '6': 'line:IDFM:C01376',
     // '8': 'line:IDFM:C01378',
@@ -19,7 +17,11 @@ export class MetroData implements Fetcher {
         message: string;
     }> = {} as any;
 
-    constructor() { }
+    #apiKey: string;
+
+    constructor(apiKey: string) {
+        this.#apiKey = apiKey;
+    }
 
     async makeCall() {
         if (MOCK_API_CALLS) {
@@ -51,7 +53,7 @@ export class MetroData implements Fetcher {
             const response = await fetch(`https://prim.iledefrance-mobilites.fr/marketplace/v2/navitia/line_reports/lines/${encodeURIComponent(id)}/line_reports?disable_geojson=true&filter_status%5B%5D=past`, {
                 headers: {
                     'Content-Type': 'application/json',
-                    'apikey': PRIM_API_KEY,
+                    'apikey': this.#apiKey,
                 },
             });
             if (!response.ok) {

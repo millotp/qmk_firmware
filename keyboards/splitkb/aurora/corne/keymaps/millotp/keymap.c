@@ -30,7 +30,49 @@
 
 enum my_keycodes {
     SHOW_METRO = SAFE_RANGE,
+    PREVIOUS_STOCK,
+    NEXT_STOCK,
 };
+
+// clang-format off
+enum layer_names {
+    _DEFAULT,
+    _LOWER,
+    _RAISE,
+    _ADJUST
+};
+
+const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
+    [_DEFAULT] = LAYOUT_split_3x6_3(
+      KC_TAB,  KC_Q, KC_W, KC_F, KC_P, KC_B,         KC_J, KC_L, KC_U,    KC_Y,   KC_SCLN, KC_BSPC,
+      KC_LSFT, KC_A, KC_R, KC_S, KC_T, KC_G,         KC_M, KC_N, KC_E,    KC_I,   KC_O,    KC_QUOT,
+      KC_LCTL, KC_Z, KC_X, KC_C, KC_D, KC_V,         KC_K, KC_H, KC_COMM, KC_DOT, KC_SLSH, KC_ESC,
+
+                     KC_LGUI, MO(1), KC_SPC,         KC_ENT, MO(2), KC_RALT
+    ),
+    [_LOWER] = LAYOUT_split_3x6_3(
+      KC_TAB,  KC_1,    KC_2,    KC_3,    KC_4,    KC_5,           KC_6,    KC_7,    KC_8,    KC_9,     KC_0,    KC_DEL,
+      KC_LSFT, XXXXXXX, KC_VOLU, KC_MPRV, KC_MNXT, XXXXXXX,        KC_LEFT, KC_DOWN, KC_UP,   KC_RIGHT, XXXXXXX, XXXXXXX,
+      KC_LCTL, KC_MPLY, KC_VOLD, XXXXXXX, XXXXXXX, XXXXXXX,        XXXXXXX, XXXXXXX, XXXXXXX, XXXXXXX,  XXXXXXX, XXXXXXX,
+
+                                  KC_LGUI, _______, KC_SPC,        KC_ENT, MO(3), KC_RALT
+    ),
+    [_RAISE] = LAYOUT_split_3x6_3(
+      KC_TAB,  KC_EXLM, KC_AT,   KC_HASH, KC_DLR,         KC_PERC, KC_CIRC, KC_AMPR, KC_ASTR, KC_LPRN, KC_RPRN, KC_DEL,
+      KC_LSFT, XXXXXXX, XXXXXXX, XXXXXXX, XXXXXXX,        XXXXXXX, KC_MINS, KC_EQL,  KC_LBRC, KC_RBRC, KC_BSLS, KC_GRV,
+      KC_LCTL, XXXXXXX, XXXXXXX, XXXXXXX, XXXXXXX,        XXXXXXX, KC_UNDS, KC_PLUS, KC_LCBR, KC_RCBR, KC_PIPE, KC_TILD,
+
+                           KC_LGUI, MO(3), KC_SPC,        KC_ENT, _______, KC_RALT
+    ),
+    [_ADJUST] = LAYOUT_split_3x6_3(
+      QK_BOOT, XXXXXXX, XXXXXXX, XXXXXXX, XXXXXXX, XXXXXXX,        XXXXXXX,    XXXXXXX,        XXXXXXX,    XXXXXXX, XXXXXXX, XXXXXXX,
+      RM_TOGG, RM_HUEU, RM_SATU, RM_VALU, XXXXXXX, XXXXXXX,        SHOW_METRO, PREVIOUS_STOCK, NEXT_STOCK, XXXXXXX, XXXXXXX, XXXXXXX,
+      RM_NEXT, RM_HUED, RM_SATD, RM_VALD, XXXXXXX, XXXXXXX,        XXXXXXX,    XXXXXXX,        XXXXXXX,    XXXXXXX, XXXXXXX, XXXXXXX,
+
+                                  KC_LGUI, _______, KC_SPC,        KC_ENT, _______, KC_RALT
+    )
+};
+// clang-format on
 
 #ifdef OLED_ENABLE
 
@@ -43,6 +85,19 @@ enum data_type {
     METRO_MESSAGE_2_DATA_TYPE,
     WEATHER_DATA_TYPE,
 };
+
+typedef struct {
+    enum stock_symbols index;
+    char               symbol[5];
+    bool               open;
+    uint32_t           current_price;
+    uint32_t           day_change_percentage;
+    uint8_t            history_length;
+    uint8_t            history[24];
+} single_stock_data;
+
+single_stock_data  stock_data[NUMBER_OF_STOCKS];
+enum stock_symbols selected_stock = DDOG;
 
 // Weather condition codes (must match script.ts)
 enum weather_condition {
@@ -81,8 +136,16 @@ void raw_hid_receive(uint8_t *data, uint8_t length) {
     switch (type) {
         case INVALID:
             break;
-        case STOCK_DATA_TYPE:
+        case STOCK_DATA_TYPE: {
+            uint8_t index           = data[1];
+            stock_data[index].index = index;
+            strncpy(stock_data[index].symbol, index == 0 ? "DDOG" : "AAPL", 5);
+            stock_data[index].open                  = data[2];
+            stock_data[index].current_price         = (uint32_t)data[3] << 24 | (uint32_t)data[4] << 16 | (uint32_t)data[5] << 8 | data[6];
+            stock_data[index].day_change_percentage = (uint32_t)data[7] << 24 | (uint32_t)data[8] << 16 | (uint32_t)data[9] << 8 | data[10];
+            stock_data[index].history_length        = data[11];
             break;
+        }
         case METRO_DATA_TYPE:
             metro_data.last_update   = timer_read32();
             metro_data.impacted_line = data[1];
@@ -175,8 +238,22 @@ static void render_metro_line_icon(char line) {
     }
 }
 
-// Render the master (left) display with weather info
+// Render the master (left) display with stock info
 static void render_master(void) {
+    // char buf[6];
+
+    single_stock_data stock = stock_data[selected_stock];
+
+    oled_write_raw_P(stocks_logo[stock.index], sizeof(stocks_logo[stock.index]));
+    oled_set_cursor(0, 4);
+    oled_write_ln(stock.symbol, false);
+
+    if (!stock.open) {
+    }
+}
+
+// Render the slave (rigth) display with weather/metro info
+static void render_slave(void) {
     char buf[6];
 
     if (!weather_data.valid) {
@@ -261,8 +338,7 @@ bool oled_task_user(void) {
     if (is_keyboard_master()) {
         render_master();
     } else {
-        render_master();
-        // render_slave();
+        render_slave();
     }
 
     return false;
@@ -282,6 +358,17 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
     }
 
     show_metro_message = record->event.pressed && keycode == SHOW_METRO;
+
+    if (record->event.pressed) {
+        switch (keycode) {
+            case PREVIOUS_STOCK:
+                selected_stock = (selected_stock + NUMBER_OF_STOCKS - 1) % NUMBER_OF_STOCKS;
+                break;
+            case NEXT_STOCK:
+                selected_stock = (selected_stock + 1) % NUMBER_OF_STOCKS;
+                break;
+        }
+    }
 
     return true;
 }
