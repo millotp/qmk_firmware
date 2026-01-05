@@ -50,7 +50,7 @@ function attachHooks() {
 }
 
 export function isKeyboardActive(): boolean {
-    return Date.now() - lastHeartbeat > 10 * 60 * 1000;
+    return Date.now() - lastHeartbeat < 10 * 60 * 1000;
 }
 
 export async function sendToKeyboard(packet: Buffer): Promise<number | undefined> {

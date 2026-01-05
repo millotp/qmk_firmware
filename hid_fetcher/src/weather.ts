@@ -1,4 +1,5 @@
 import { type Fetcher, DATA_TYPE, MOCK_API_CALLS } from "./fetcher.ts";
+import { logger } from "./logger.ts";
 
 const CITY = 'Paris,fr';
 
@@ -102,15 +103,19 @@ export class WeatherData implements Fetcher {
     }
 
     async refresh(): Promise<void> {
-        const data = await this.makeCall();
-        this.condition = this.mapWeatherCondition(data.weather[0]?.id || 800);
-        this.temperature = Math.round(data.main.temp - 273.15);
-        this.feelsLike = Math.round(data.main.feels_like - 273.15);
-        this.humidity = data.main.humidity;
-        this.pressure = Math.round(data.main.pressure);
-        this.windSpeed = Math.round(data.wind.speed);
-        this.sunrise = this.formatTime(data.sys.sunrise);
-        this.sunset = this.formatTime(data.sys.sunset);
+        try {
+            const data = await this.makeCall();
+            this.condition = this.mapWeatherCondition(data.weather[0]?.id || 800);
+            this.temperature = Math.round(data.main.temp - 273.15);
+            this.feelsLike = Math.round(data.main.feels_like - 273.15);
+            this.humidity = data.main.humidity;
+            this.pressure = Math.round(data.main.pressure);
+            this.windSpeed = Math.round(data.wind.speed);
+            this.sunrise = this.formatTime(data.sys.sunrise);
+            this.sunset = this.formatTime(data.sys.sunset);
+        } catch (err) {
+            logger.error(`Failed to refresh weather data: ${err}`);
+        }
     }
 
     serialize(): Buffer[] {

@@ -51,7 +51,7 @@ async function main() {
         // sleep for 10 minutes
         await sleep(10 * 60);
 
-        if (isKeyboardActive()) {
+        if (!isKeyboardActive()) {
             logger.debug("keyboard is inactive, skip refresh");
             await sleep(1 * 60);
 

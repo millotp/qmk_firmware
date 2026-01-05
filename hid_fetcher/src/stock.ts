@@ -1,4 +1,5 @@
 import { type Fetcher, DATA_TYPE, MOCK_API_CALLS } from './fetcher.ts';
+import { logger } from './logger.ts';
 
 const STOCKS = ['DDOG', 'AAPL'] as const;
 type Stock = typeof STOCKS[number];
@@ -84,29 +85,32 @@ export class StockData implements Fetcher {
     }
 
     async refresh(): Promise<void> {
-        const data = await this.makeCall();
-        for (const [symbol, stock] of (Object.entries(data) as Array<[Stock, AlpacaResponse]>)) {
-            if (!stock.bars || stock.bars.length == 0) {
-                this.stocks[symbol] = {
-                    symbol: symbol,
-                    open: false,
-                    currentPrice: 0,
-                    dayChangePercent: 0,
-                    hourlyHistory: [],
+        try {
+            const data = await this.makeCall();
+            for (const [symbol, stock] of (Object.entries(data) as Array<[Stock, AlpacaResponse]>)) {
+                if (!stock.bars || stock.bars.length == 0) {
+                    this.stocks[symbol] = {
+                        symbol: symbol,
+                        open: false,
+                        currentPrice: 0,
+                        dayChangePercent: 0,
+                        hourlyHistory: [],
+                    }
+
+                    continue;
                 }
 
-                continue;
+                this.stocks[symbol] = {
+                    symbol: symbol,
+                    open: true,
+                    currentPrice: stock.bars.at(-1)!.vw,
+                    dayChangePercent: 0,
+                    hourlyHistory: stock.bars.map((b: any) => b.vw),
+                }
             }
-
-            this.stocks[symbol] = {
-                symbol: symbol,
-                open: true,
-                currentPrice: stock.bars.at(-1)!.vw,
-                dayChangePercent: 0,
-                hourlyHistory: stock.bars.map((b: any) => b.vw),
-            }
+        } catch (err) {
+            logger.error(`Failed to refresh stock data: ${err}`);
         }
-        return;
     }
 
     serialize(): Buffer[] {

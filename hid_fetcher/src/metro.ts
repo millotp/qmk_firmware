@@ -1,4 +1,5 @@
 import { type Fetcher, DATA_TYPE, MOCK_API_CALLS } from "./fetcher.ts";
+import { logger } from "./logger.ts";
 
 const METRO_LINES = {
     // '6': 'line:IDFM:C01376',
@@ -75,26 +76,30 @@ export class MetroData implements Fetcher {
     }
 
     async refresh(): Promise<void> {
-        const data = await this.makeCall();
-        let line: keyof typeof METRO_LINES;
-        for (line in METRO_LINES) {
-            if (line in data && 'disruptions' in data[line] && data[line].disruptions.length > 0) {
-                this.lines[line] = {
-                    name: line,
-                    incident: true,
-                    message: this.findMessage(data[line]),
+        try {
+            const data = await this.makeCall();
+            let line: keyof typeof METRO_LINES;
+            for (line in METRO_LINES) {
+                if (line in data && 'disruptions' in data[line] && data[line].disruptions.length > 0) {
+                    this.lines[line] = {
+                        name: line,
+                        incident: true,
+                        message: this.findMessage(data[line]),
+                    }
+                } else {
+                    this.lines[line] = {
+                        name: line,
+                        incident: false
+                    };
                 }
-            } else {
-                this.lines[line] = {
-                    name: line,
-                    incident: false
-                };
             }
+        } catch (err) {
+            logger.error(`Failed to refresh metro data: ${err}`);
         }
     }
 
     serialize(): Buffer[] {
-        const payloads = [];
+        const payloads: Buffer[] = [];
         for (const incidents of Object.values(this.lines).filter(l => l.incident)) {
             const payload = Buffer.alloc(32);
             payload.writeUint8(DATA_TYPE.METRO, 1);
