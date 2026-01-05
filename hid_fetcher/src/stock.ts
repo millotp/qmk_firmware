@@ -4,12 +4,21 @@ import { logger } from './logger.ts';
 const STOCKS = ['DDOG', 'AAPL'] as const;
 type Stock = typeof STOCKS[number];
 
-type AlpacaResponse = {
+type AlpacaBarResponse = {
     bars: Array<{
         t: string;
         vw: number;
+        c: number; // close price
     }> | null,
     next_page_token: string | null;
+    symbol: string;
+}
+
+type AlpacaLatestTradeResponse = {
+    trade: {
+        p: number; // price
+        t: string; // timestamp
+    };
     symbol: string;
 }
 
@@ -34,28 +43,65 @@ export class StockData implements Fetcher {
         }
     }
 
-    async makeCall(): Promise<Record<Stock, AlpacaResponse>> {
+    // Check if US stock market is currently open (simplified check)
+    private isMarketOpen(): boolean {
+        const now = new Date();
+        const utcHour = now.getUTCHours();
+        const utcDay = now.getUTCDay();
+
+        // Market is closed on weekends
+        if (utcDay === 0 || utcDay === 6) return false;
+
+        // NYSE hours: 9:30 AM - 4:00 PM ET = 14:30 - 21:00 UTC (winter) or 13:30 - 20:00 UTC (summer)
+        // Using approximate window: 13:30 - 21:00 UTC
+        const utcMinutes = now.getUTCMinutes();
+        const totalMinutes = utcHour * 60 + utcMinutes;
+
+        return totalMinutes >= 13 * 60 + 30 && totalMinutes < 21 * 60;
+    }
+
+    // Get start date for bar data (today if market open, last trading day if closed)
+    private getStartDate(): string {
+        const now = new Date();
+
+        if (this.isMarketOpen()) {
+            return now.toISOString().split('T')[0];
+        }
+
+        // Go back to find last trading day
+        let daysBack = 1;
+        const day = now.getUTCDay();
+
+        if (day === 0) daysBack = 2; // Sunday -> Friday
+        else if (day === 6) daysBack = 1; // Saturday -> Friday
+
+        const lastTradeDay = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
+        return lastTradeDay.toISOString().split('T')[0];
+    }
+
+    async fetchBars(): Promise<Record<Stock, AlpacaBarResponse>> {
         if (MOCK_API_CALLS) {
+            const mockOpen = this.isMarketOpen();
             return {
                 'DDOG': {
-                    bars: [
-                        { t: '2026-01-02T14:00:00Z', vw: 136.681662 },
-                        { t: '2026-01-02T15:00:00Z', vw: 133.681842 },
-                        { t: '2026-01-02T16:00:00Z', vw: 133.15958 },
-                        { t: '2026-01-02T17:00:00Z', vw: 133.424684 },
-                        { t: '2026-01-02T18:00:00Z', vw: 132.563116 },
-                    ],
+                    bars: mockOpen ? [
+                        { t: '2026-01-02T14:00:00Z', vw: 136.681662, c: 136.50 },
+                        { t: '2026-01-02T15:00:00Z', vw: 133.681842, c: 133.50 },
+                        { t: '2026-01-02T16:00:00Z', vw: 133.15958, c: 133.00 },
+                        { t: '2026-01-02T17:00:00Z', vw: 133.424684, c: 133.30 },
+                        { t: '2026-01-02T18:00:00Z', vw: 132.563116, c: 132.50 },
+                    ] : null,
                     next_page_token: null,
                     symbol: 'DDOG'
                 },
                 'AAPL': {
-                    bars: [
-                        { t: '2026-01-02T14:00:00Z', vw: 136.681662 },
-                        { t: '2026-01-02T15:00:00Z', vw: 133.681842 },
-                        { t: '2026-01-02T16:00:00Z', vw: 133.15958 },
-                        { t: '2026-01-02T17:00:00Z', vw: 133.424684 },
-                        { t: '2026-01-02T18:00:00Z', vw: 132.563116 },
-                    ],
+                    bars: mockOpen ? [
+                        { t: '2026-01-02T14:00:00Z', vw: 186.681662, c: 186.50 },
+                        { t: '2026-01-02T15:00:00Z', vw: 185.681842, c: 185.50 },
+                        { t: '2026-01-02T16:00:00Z', vw: 185.15958, c: 185.00 },
+                        { t: '2026-01-02T17:00:00Z', vw: 186.424684, c: 186.30 },
+                        { t: '2026-01-02T18:00:00Z', vw: 187.563116, c: 187.50 },
+                    ] : null,
                     next_page_token: null,
                     symbol: 'AAPL'
                 }
@@ -64,11 +110,11 @@ export class StockData implements Fetcher {
 
         const params = new URLSearchParams({
             timeframe: "1Hour",
-            start: '2026-01-02',
+            start: this.getStartDate(),
             feed: 'iex',
         });
 
-        const data: Record<Stock, AlpacaResponse> = {} as any;
+        const data: Record<Stock, AlpacaBarResponse> = {} as any;
 
         for (const symbol of STOCKS) {
             const res = await fetch(`https://data.alpaca.markets/v2/stocks/${symbol}/bars?${params}`, {
@@ -77,36 +123,74 @@ export class StockData implements Fetcher {
                     'APCA-API-SECRET-KEY': this.#apiSecret,
                 },
             });
-            if (!res.ok) throw new Error(`request to Alpaca failed: ${res.status} ${await res.text()}`);
+            if (!res.ok) throw new Error(`request to Alpaca bars failed: ${res.status} ${await res.text()}`);
             data[symbol] = await res.json();
         }
 
         return data;
     }
 
+    async fetchLatestTrade(symbol: Stock): Promise<AlpacaLatestTradeResponse> {
+        if (MOCK_API_CALLS) {
+            return {
+                trade: { p: symbol === 'DDOG' ? 132.50 : 187.50, t: new Date().toISOString() },
+                symbol
+            };
+        }
+
+        const res = await fetch(`https://data.alpaca.markets/v2/stocks/${symbol}/trades/latest?feed=iex`, {
+            headers: {
+                'APCA-API-KEY-ID': this.#apiKey,
+                'APCA-API-SECRET-KEY': this.#apiSecret,
+            },
+        });
+        if (!res.ok) throw new Error(`request to Alpaca latest trade failed: ${res.status} ${await res.text()}`);
+        return await res.json();
+    }
+
     async refresh(): Promise<void> {
         try {
-            const data = await this.makeCall();
-            for (const [symbol, stock] of (Object.entries(data) as Array<[Stock, AlpacaResponse]>)) {
-                if (!stock.bars || stock.bars.length == 0) {
-                    this.stocks[symbol] = {
-                        symbol: symbol,
-                        open: false,
-                        currentPrice: 0,
-                        dayChangePercent: 0,
-                        hourlyHistory: [],
-                    }
+            const marketOpen = this.isMarketOpen();
+            const barData = await this.fetchBars();
 
+            for (const [symbol, stock] of (Object.entries(barData) as Array<[Stock, AlpacaBarResponse]>)) {
+                if (!stock.bars || stock.bars.length === 0) {
+                    // No bar data - fetch latest trade for last known price
+                    try {
+                        const latestTrade = await this.fetchLatestTrade(symbol);
+                        this.stocks[symbol] = {
+                            symbol: symbol,
+                            open: false,
+                            currentPrice: latestTrade.trade.p,
+                            dayChangePercent: 0,
+                            hourlyHistory: [],
+                        };
+                    } catch {
+                        // Keep previous data if we can't fetch latest
+                        if (!this.stocks[symbol]) {
+                            this.stocks[symbol] = {
+                                symbol: symbol,
+                                open: false,
+                                currentPrice: 0,
+                                dayChangePercent: 0,
+                                hourlyHistory: [],
+                            };
+                        }
+                    }
                     continue;
                 }
 
+                const openPrice = stock.bars[0].vw;
+                const currentPrice = stock.bars.at(-1)!.vw;
+                const dayChange = ((currentPrice - openPrice) / openPrice) * 10000; // basis points * 100
+
                 this.stocks[symbol] = {
                     symbol: symbol,
-                    open: true,
-                    currentPrice: stock.bars.at(-1)!.vw,
-                    dayChangePercent: 0,
-                    hourlyHistory: stock.bars.map((b: any) => b.vw),
-                }
+                    open: marketOpen,
+                    currentPrice: currentPrice,
+                    dayChangePercent: dayChange,
+                    hourlyHistory: stock.bars.map((b) => b.vw),
+                };
             }
         } catch (err) {
             logger.error(`Failed to refresh stock data: ${err}`);
@@ -114,7 +198,7 @@ export class StockData implements Fetcher {
     }
 
     serialize(): Buffer[] {
-        const payloads = [];
+        const payloads: Buffer[] = [];
         for (const stock of Object.values(this.stocks)) {
             const payload = Buffer.alloc(32);
             // first byte is ignored

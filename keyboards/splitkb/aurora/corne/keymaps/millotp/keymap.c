@@ -91,13 +91,55 @@ typedef struct {
     char               symbol[5];
     bool               open;
     uint32_t           current_price;
-    uint32_t           day_change_percentage;
+    int32_t            day_change_percentage; // can be negative
     uint8_t            history_length;
-    uint8_t            history[24];
+    uint8_t            history[24]; // normalized 0-31 values
 } single_stock_data;
 
 single_stock_data  stock_data[NUMBER_OF_STOCKS];
 enum stock_symbols selected_stock = DDOG;
+
+// Draw a line between two points using Bresenham's algorithm
+static void oled_draw_line(int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
+    int16_t dx = abs(x1 - x0);
+    int16_t dy = -abs(y1 - y0);
+    int16_t sx = x0 < x1 ? 1 : -1;
+    int16_t sy = y0 < y1 ? 1 : -1;
+    int16_t err = dx + dy;
+
+    while (true) {
+        oled_write_pixel(x0, y0, true);
+
+        if (x0 == x1 && y0 == y1) break;
+
+        int16_t e2 = 2 * err;
+        if (e2 >= dy) {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+// Decode history from packed 5-bit format in HID payload
+static void decode_stock_history(uint8_t *data, uint8_t history_length, uint8_t *history_out) {
+    // History is encoded in the payload, each value is 5 bits, packed sequentially
+    uint16_t bit_pos = 0;
+    for (uint8_t i = 0; i < history_length && i < 24; i++) {
+        uint8_t value = 0;
+        for (uint8_t b = 0; b < 5; b++, bit_pos++) {
+            uint8_t byte_idx = bit_pos >> 3;
+            uint8_t bit_idx = bit_pos & 7;
+            if (data[byte_idx] & (1 << bit_idx)) {
+                value |= (1 << b);
+            }
+        }
+        history_out[i] = value;
+    }
+}
 
 // Weather condition codes (must match script.ts)
 enum weather_condition {
@@ -142,8 +184,10 @@ void raw_hid_receive(uint8_t *data, uint8_t length) {
             strncpy(stock_data[index].symbol, index == 0 ? "DDOG" : "AAPL", 5);
             stock_data[index].open                  = data[2];
             stock_data[index].current_price         = (uint32_t)data[3] << 24 | (uint32_t)data[4] << 16 | (uint32_t)data[5] << 8 | data[6];
-            stock_data[index].day_change_percentage = (uint32_t)data[7] << 24 | (uint32_t)data[8] << 16 | (uint32_t)data[9] << 8 | data[10];
+            stock_data[index].day_change_percentage = (int32_t)((uint32_t)data[7] << 24 | (uint32_t)data[8] << 16 | (uint32_t)data[9] << 8 | data[10]);
             stock_data[index].history_length        = data[11];
+            // Decode the packed 5-bit history values
+            decode_stock_history(data + 12, stock_data[index].history_length, stock_data[index].history);
             break;
         }
         case METRO_DATA_TYPE:
@@ -238,17 +282,81 @@ static void render_metro_line_icon(char line) {
     }
 }
 
+// Draw the stock price graph
+// Graph area: x=0-31, y=48-127 (lines 6-15, 80 pixels tall)
+static void render_stock_graph(single_stock_data *stock) {
+    if (stock->history_length < 2) return;
+
+    // Graph dimensions
+    const uint8_t graph_y_start = 48;  // Start at line 6 (6 * 8 = 48)
+    const uint8_t graph_height = 72;   // 9 lines worth of pixels
+    const uint8_t graph_width = 30;    // Leave 1px margin on each side
+
+    // Find min/max for scaling (values are already 0-31)
+    uint8_t min_val = 31, max_val = 0;
+    for (uint8_t i = 0; i < stock->history_length; i++) {
+        if (stock->history[i] < min_val) min_val = stock->history[i];
+        if (stock->history[i] > max_val) max_val = stock->history[i];
+    }
+
+    // Avoid division by zero
+    uint8_t range = max_val - min_val;
+    if (range == 0) range = 1;
+
+    // Calculate x spacing between points
+    uint8_t x_step = graph_width / (stock->history_length - 1);
+    if (x_step == 0) x_step = 1;
+
+    // Draw the graph line connecting points
+    int16_t prev_x = 1;
+    int16_t prev_y = graph_y_start + graph_height - 1 -
+                     ((stock->history[0] - min_val) * (graph_height - 1) / range);
+
+    for (uint8_t i = 1; i < stock->history_length; i++) {
+        int16_t x = 1 + (i * graph_width) / (stock->history_length - 1);
+        int16_t y = graph_y_start + graph_height - 1 -
+                    ((stock->history[i] - min_val) * (graph_height - 1) / range);
+
+        oled_draw_line(prev_x, prev_y, x, y);
+
+        prev_x = x;
+        prev_y = y;
+    }
+}
+
 // Render the master (left) display with stock info
 static void render_master(void) {
-    // char buf[6];
+    char buf[10];
+    single_stock_data *stock = &stock_data[selected_stock];
 
-    single_stock_data stock = stock_data[selected_stock];
+    // Lines 0-2: Logo (24 pixels, 3 pages)
+    oled_write_raw_P(stocks_logo[stock->index], sizeof(stocks_logo[stock->index]));
 
-    oled_write_raw_P(stocks_logo[stock.index], sizeof(stocks_logo[stock.index]));
-    oled_set_cursor(0, 4);
-    oled_write_ln(stock.symbol, false);
+    // Line 3: Symbol
+    oled_set_cursor(0, 3);
+    oled_write_ln(stock->symbol, false);
 
-    if (!stock.open) {
+    // Line 4: Current price (format: $XXX.XX)
+    uint32_t dollars = stock->current_price / 100;
+    uint32_t cents = stock->current_price % 100;
+    snprintf(buf, sizeof(buf), "%3lu.%02lu", (unsigned long)dollars, (unsigned long)cents);
+    oled_write_ln(buf, false);
+
+    if (stock->open) {
+        // Line 5: Day change percentage
+        int32_t change = stock->day_change_percentage;
+        char sign = change >= 0 ? '+' : '-';
+        if (change < 0) change = -change;
+        uint32_t change_int = change / 100;
+        uint32_t change_dec = change % 100;
+        snprintf(buf, sizeof(buf), "%c%lu.%02lu%%", sign, (unsigned long)change_int, (unsigned long)change_dec);
+        oled_write_ln(buf, false);
+
+        // Lines 6-15: Stock price graph
+        render_stock_graph(stock);
+    } else {
+        // Market closed
+        oled_write_ln("CLOSD", false);
     }
 }
 
