@@ -110,10 +110,10 @@ single_stock_data  stock_data[NUMBER_OF_STOCKS] = {
 };
 
 // Decode history from packed 5-bit format in HID payload
-static void decode_stock_history(uint8_t *data, uint8_t history_length, uint8_t *history_out) {
+static void decode_stock_history(uint8_t *data, uint8_t count, uint8_t *history_out) {
     // History is encoded in the payload, each value is 5 bits, packed sequentially
     uint16_t bit_pos = 0;
-    for (uint8_t i = 0; i < history_length && i < 24; i++) {
+    for (uint8_t i = 0; i < count; i++) {
         uint8_t value = 0;
         for (uint8_t b = 0; b < 5; b++, bit_pos++) {
             uint8_t byte_idx = bit_pos >> 3;
@@ -169,14 +169,17 @@ void raw_hid_receive(uint8_t *data, uint8_t length) {
             stock_data[index].current_price         = (uint32_t)data[3] << 16 | (uint32_t)data[4] << 8 | data[5];
             stock_data[index].day_change_percentage = (int16_t)((uint16_t)data[6] << 8 | data[7]);
             stock_data[index].history_length        = data[8];
-            // Decode the packed 5-bit history values
-            decode_stock_history(data + 9, 22, stock_data[index].history);
+            // Decode first 35 values (or less if history is shorter)
+            uint8_t first_count = stock_data[index].history_length < 35 ? stock_data[index].history_length : 35;
+            decode_stock_history(data + 9, first_count, stock_data[index].history);
             break;
         }
         case STOCK_2_DATA_TYPE: {
             uint8_t index = data[1];
-            // Decode the packed 5-bit history values
-            decode_stock_history(data + 2, 29, stock_data[index].history + 35);
+            // Decode remaining values (up to 45 more, total 80)
+            uint8_t remaining = stock_data[index].history_length > 35 ? stock_data[index].history_length - 35 : 0;
+            if (remaining > 45) remaining = 45;
+            decode_stock_history(data + 2, remaining, stock_data[index].history + 35);
             break;
         }
         case METRO_DATA_TYPE:

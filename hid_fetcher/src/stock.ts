@@ -193,32 +193,34 @@ export class StockData implements Fetcher {
             payload.writeUint16BE(price >> 8, 4);
             payload.writeUint8(price & 0xFF, 6);
             payload.writeInt16BE(Math.round(stock.dayChangePercent * 100), 7);
-            payload.writeUInt8(stock.hourlyHistory.length, 8);
-            // we have 22 bytes remaining, we encode each hour as 5 bits, so we can encode the first 35 history points
+            payload.writeUInt8(stock.hourlyHistory.length, 9);  // byte 9, not 8!
+            // bytes 10-31: we have 22 bytes = 176 bits, can encode 35 5-bit values
             const min = Math.min(...stock.hourlyHistory);
             const max = Math.max(...stock.hourlyHistory);
+            const range = max - min || 1;  // avoid division by zero
             let bitPos = 0;
             for (const price of stock.hourlyHistory.slice(0, 35)) {
-                let normalized = Math.floor((price - min) / (max - min) * 32); // normalize between 0-31
+                let normalized = Math.floor((price - min) / range * 31);  // normalize to 0-31
                 for (let i = 0; i < 5; i++, bitPos++) {
                     if (normalized & 1) {
                         const byteIndex = bitPos >> 3;
                         const bitIndex = bitPos & 7;
-                        payload[byteIndex + 9] |= 1 << bitIndex;
+                        payload[byteIndex + 10] |= 1 << bitIndex;  // start at byte 10
                     }
                     normalized >>= 1;
                 }
             }
             payloads.push(payload);
 
-            if (stock.hourlyHistory.length >= 35) {
-                // encode the rest of the history
+            if (stock.hourlyHistory.length > 35) {
+                // encode the rest of the history (values 35-79 = up to 45 values)
                 const rest = Buffer.alloc(32);
                 rest.writeUInt8(DATA_TYPE.STOCK_2, 1);
                 rest.writeUInt8(STOCKS.indexOf(stock.symbol), 2);
+                // bytes 3-31: 29 bytes = 232 bits, can encode 46 5-bit values
                 bitPos = 0;
-                for (const price of stock.hourlyHistory.slice(35, 79)) {
-                    let normalized = Math.floor((price - min) / (max - min) * 32); // normalize between 0-31
+                for (const price of stock.hourlyHistory.slice(35, 80)) {
+                    let normalized = Math.floor((price - min) / range * 31);  // normalize to 0-31
                     for (let i = 0; i < 5; i++, bitPos++) {
                         if (normalized & 1) {
                             const byteIndex = bitPos >> 3;
