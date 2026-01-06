@@ -7,8 +7,6 @@ type Stock = typeof STOCKS[number];
 type AlpacaBar = {
     t: string;
     vw: number;
-    o: number,
-    c: number; // close price
 };
 
 type AlpacaBarResponse = {
@@ -23,6 +21,16 @@ type AlpacaLatestTradeResponse = {
         t: string; // timestamp
     };
     symbol: string;
+}
+
+type AlpacaSnapshotResponse = {
+    latestTrade: {
+        p: number;
+        t: string;
+    };
+    prevDailyBar: {
+        c: number; // previous day close
+    };
 }
 
 export class StockData implements Fetcher {
@@ -51,11 +59,11 @@ export class StockData implements Fetcher {
             return {
                 'DDOG': {
                     bars: [
-                        { t: '2026-01-02T14:00:00Z', o: 95, vw: 100, c: 100 },
-                        { t: '2026-01-02T15:00:00Z', o: 100, vw: 110, c: 110 },
-                        { t: '2026-01-02T16:00:00Z', o: 110, vw: 130, c: 130 },
-                        { t: '2026-01-02T17:00:00Z', o: 130, vw: 110, c: 110 },
-                        { t: '2026-01-02T18:00:00Z', o: 110, vw: 90, c: 90 },
+                        { t: '2026-01-02T14:00:00Z', vw: 100, },
+                        { t: '2026-01-02T15:00:00Z', vw: 110, },
+                        { t: '2026-01-02T16:00:00Z', vw: 130, },
+                        { t: '2026-01-02T17:00:00Z', vw: 110, },
+                        { t: '2026-01-02T18:00:00Z', vw: 90, },
                     ],
                     next_page_token: null,
                     symbol: 'DDOG'
@@ -91,21 +99,21 @@ export class StockData implements Fetcher {
         return data;
     }
 
-    async fetchLatestTrade(symbol: Stock): Promise<AlpacaLatestTradeResponse> {
+    async fetchSnapshot(symbol: Stock): Promise<AlpacaSnapshotResponse> {
         if (MOCK_API_CALLS) {
             return {
-                trade: { p: symbol === 'DDOG' ? 132.50 : 187.50, t: new Date().toISOString() },
-                symbol
+                latestTrade: { p: symbol === 'DDOG' ? 132.50 : 187.50, t: new Date().toISOString() },
+                prevDailyBar: { c: symbol === 'DDOG' ? 130.00 : 185.00 }
             };
         }
 
-        const res = await fetch(`https://data.alpaca.markets/v2/stocks/${symbol}/trades/latest?feed=iex`, {
+        const res = await fetch(`https://data.alpaca.markets/v2/stocks/${symbol}/snapshot?feed=iex`, {
             headers: {
                 'APCA-API-KEY-ID': this.#apiKey,
                 'APCA-API-SECRET-KEY': this.#apiSecret,
             },
         });
-        if (!res.ok) throw new Error(`request to Alpaca latest trade failed: ${res.status} ${await res.text()}`);
+        if (!res.ok) throw new Error(`request to Alpaca snapshot failed: ${res.status} ${await res.text()}`);
         return await res.json();
     }
 
@@ -114,57 +122,77 @@ export class StockData implements Fetcher {
             const barData = await this.fetchBars();
 
             for (const [symbol, stock] of (Object.entries(barData) as Array<[Stock, AlpacaBarResponse]>)) {
+                // Fetch snapshot to get previous day's close (used for day change calculation)
+                const snapshot = await this.fetchSnapshot(symbol);
+                const prevClose = snapshot.prevDailyBar.c;
+
                 if (!stock.bars || stock.bars.length === 0) {
-                    // No bar data - fetch latest trade for last known price
-                    const latestTrade = await this.fetchLatestTrade(symbol);
+                    // No bar data - market is closed, use latest trade
+                    const currentPrice = snapshot.latestTrade.p;
+                    const dayChange = prevClose > 0 ? ((currentPrice - prevClose) / prevClose) * 100 : 0;
                     this.stocks[symbol] = {
                         symbol: symbol,
                         open: false,
-                        currentPrice: latestTrade.trade.p,
-                        dayChangePercent: 0,
+                        currentPrice: currentPrice,
+                        dayChangePercent: dayChange,
                         hourlyHistory: [],
                     };
-
                     continue;
                 }
 
                 // discard data outside of open hours (14h30-21h UTC)
                 stock.bars = stock.bars.filter(b => {
                     const t = new Date(b.t);
-                    const h = t.getHours();
-                    const m = t.getMinutes();
-                    return (h > 14 || (h === 14 && m >= 30)) && h <= 21;
+                    const h = t.getUTCHours();  // Use UTC!
+                    const m = t.getUTCMinutes();
+                    return (h > 14 || (h === 14 && m >= 30)) && h < 21;
                 });
 
-                // sometime there are hole in the data, we can fill it with a linear interpolation.
-                const inter = [stock.bars[0]];
-                for (let i = 1; i < stock.bars.length; i++) {
-                    const previousTime = new Date(stock.bars[i - 1].t).getTime();
-                    let time = new Date(stock.bars[i].t).getTime();
-                    const diff = time - previousTime;
-                    let filled = 1;
-                    while (time - previousTime > 6 * 60 * 1000) {
-                        // we have a gap to fill
-                        const t = 5 * 60 * 1000 * filled / diff;
-                        inter.push({
-                            t: new Date(previousTime + 5 * 60 * 1000 * filled).toISOString(),
-                            vw: t * stock.bars[i].vw + (1 - t) * stock.bars[i - 1].vw,
-                            o: stock.bars[i - 1].o,
-                            c: stock.bars[i - 1].c,
-                        })
-                        time -= 5 * 60 * 1000;
-                        filled++;
-                    }
-                    inter.push(stock.bars[i]);
+                if (stock.bars.length === 0) {
+                    // All bars were outside market hours
+                    const currentPrice = snapshot.latestTrade.p;
+                    const dayChange = prevClose > 0 ? ((currentPrice - prevClose) / prevClose) * 100 : 0;
+                    this.stocks[symbol] = {
+                        symbol: symbol,
+                        open: false,
+                        currentPrice: currentPrice,
+                        dayChangePercent: dayChange,
+                        hourlyHistory: [],
+                    };
+                    continue;
                 }
-                stock.bars = inter;
 
-                const openPrice = stock.bars[0].o;
+                // Fill gaps in data with linear interpolation
+                const FIVE_MIN_MS = 5 * 60 * 1000;
+                const interpolated: AlpacaBar[] = [stock.bars[0]];
+
+                for (let i = 1; i < stock.bars.length; i++) {
+                    const prev = stock.bars[i - 1];
+                    const curr = stock.bars[i];
+                    const prevTime = new Date(prev.t).getTime();
+                    const currTime = new Date(curr.t).getTime();
+                    const gapMs = currTime - prevTime;
+
+                    // Calculate how many 5-min intervals this gap spans
+                    const intervals = Math.round(gapMs / FIVE_MIN_MS);
+
+                    // Insert interpolated points for missing intervals
+                    for (let step = 1; step < intervals; step++) {
+                        const ratio = step / intervals;
+                        interpolated.push({
+                            t: new Date(prevTime + step * FIVE_MIN_MS).toISOString(),
+                            vw: prev.vw + ratio * (curr.vw - prev.vw),
+                        });
+                    }
+                    interpolated.push(curr);
+                }
+                stock.bars = interpolated;
+
                 const currentPrice = stock.bars.at(-1)!.vw;
-                const dayChange = ((currentPrice - openPrice) / openPrice) * 100;
+                // Calculate day change from previous day's close (like Google/Yahoo Finance)
+                const dayChange = prevClose > 0 ? ((currentPrice - prevClose) / prevClose) * 100 : 0;
 
-                // console.log(stock.bars.map(b => ({ t: b.t, p: b.vw })));
-                console.log(`opening: ${openPrice}    current: ${currentPrice}   change: ${dayChange}  points: ${stock.bars.length}`);
+                console.log(`${symbol}: prevClose: ${prevClose}  current: ${currentPrice}  change: ${dayChange.toFixed(2)}%  points: ${stock.bars.length}`);
 
                 this.stocks[symbol] = {
                     symbol: symbol,

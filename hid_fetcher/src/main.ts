@@ -32,14 +32,7 @@ export async function refreshAndSend() {
 
         const payload = fetcher.serialize();
         for (const packet of payload) {
-            // spam the packets for macos
-            if (process.platform === 'darwin') {
-                for (let i = 0; i < 5; i++) {
-                    await sendToKeyboard(packet);
-                }
-            } else {
-                await sendToKeyboard(packet);
-            }
+            await sendToKeyboard(packet);
         }
     }
 }

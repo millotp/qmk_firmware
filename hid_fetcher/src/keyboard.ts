@@ -53,8 +53,15 @@ export function isKeyboardActive(): boolean {
     return Date.now() - lastHeartbeat < 10 * 60 * 1000;
 }
 
-export async function sendToKeyboard(packet: Buffer): Promise<number | undefined> {
-    return keyboard?.write(packet);
+export async function sendToKeyboard(packet: Buffer): Promise<void> {
+    // spam the packets for macos
+    if (process.platform === 'darwin') {
+        for (let i = 0; i < 5; i++) {
+            await keyboard?.write(packet);
+        }
+    } else {
+        await keyboard?.write(packet);
+    }
 }
 
 export async function waitForKeyboard(): Promise<void> {

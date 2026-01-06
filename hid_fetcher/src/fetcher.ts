@@ -7,7 +7,7 @@ export const DATA_TYPE = {
     WEATHER: 6,
 };
 
-export const MOCK_API_CALLS = true;
+export const MOCK_API_CALLS = false;
 
 export interface Fetcher {
     refresh(): Promise<void>;
