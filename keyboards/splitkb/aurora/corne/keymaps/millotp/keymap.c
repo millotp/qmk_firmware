@@ -227,6 +227,7 @@ static const char PROGMEM icon_mist[]   = {0x20, 0x8F, 0x90, 0x91, 0x20, 0x20, 0
 static const char PROGMEM icon_line_6[] = {0x20, 0x92, 0x93, 0x94, 0x20, 0x20, 0xB2, 0xB3, 0xB4, 0x20, 0};
 static const char PROGMEM icon_line_8[] = {0x20, 0x95, 0x96, 0x97, 0x20, 0x20, 0xB5, 0xB6, 0xB7, 0x20, 0};
 static const char PROGMEM icon_line_9[] = {0x20, 0x98, 0x99, 0x9A, 0x20, 0x20, 0xB8, 0xB9, 0xBA, 0x20, 0};
+static const char PROGMEM text_closed[] = {0xC0, 0xC1, 0xC2, 0xC3, 0xC4};
 
 // raw char
 static const char PROGMEM degree[] = {0x02, 0x05, 0x02, 0x00, 0x3E, 0x41, 0x41, 0x22}; // °C
@@ -299,15 +300,18 @@ static void oled_draw_line(int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
     }
 }
 
-// Draw the stock price graph
-// Graph area: x=0-31, y=48-127 (lines 6-15, 80 pixels tall)
-static void render_stock_graph(single_stock_data *stock) {
+static void clear_stock_graph(void) {
     // clear the graph
     for (uint8_t x = 0; x < 32; x++) {
         for (uint8_t y = 48; y < 128; y++) {
             oled_write_pixel(x, y, false);
         }
     }
+}
+
+// Draw the stock price graph
+// Graph area: x=0-31, y=48-127 (lines 6-15, 80 pixels tall)
+static void render_stock_graph(single_stock_data *stock) {
     if (stock->history_length < 2) return;
 
     // Draw the graph line connecting points
@@ -334,28 +338,31 @@ static void render_master(void) {
     snprintf(buf, sizeof(buf), "%3d.%d", dollars, cents);
     oled_write(buf, false);
 
-    if (stock->open) {
-        // Line 5: Day change percentage
-        int32_t change = stock->day_change_percentage;
-        char    sign   = change >= 0 ? '+' : '-';
-        if (change < 0) change = -change;
-        if (change > 1000) {
-            // more than 10%
-            uint16_t change_int = change / 100;
-            uint16_t change_dec = (change / 10) % 10;
-            snprintf(buf, sizeof(buf), "%c%2d.%d%%", sign, change_int, change_dec);
-        } else {
-            uint16_t change_int = change / 100;
-            uint16_t change_dec = change % 100;
-            snprintf(buf, sizeof(buf), "%c%d.%02d%%", sign, change_int, change_dec);
-        }
-        oled_write(buf, false);
+    // Line 5: Day change percentage
+    int32_t change = stock->day_change_percentage;
+    char    sign   = change >= 0 ? '+' : '-';
+    if (change < 0) change = -change;
+    if (change > 1000) {
+        // more than 10%
+        uint16_t change_int = change / 100;
+        uint16_t change_dec = (change / 10) % 10;
+        snprintf(buf, sizeof(buf), "%c%2d.%d%%", sign, change_int, change_dec);
+    } else {
+        uint16_t change_int = change / 100;
+        uint16_t change_dec = change % 100;
+        snprintf(buf, sizeof(buf), "%c%d.%02d%%", sign, change_int, change_dec);
+    }
 
+    oled_write(buf, false);
+
+    clear_stock_graph();
+
+    if (stock->open) {
         // Lines 6-15: Stock price graph
         render_stock_graph(stock);
     } else {
         // Market closed
-        oled_write_ln("CLOSD", false);
+        oled_write_P(text_closed, false);
     }
 }
 

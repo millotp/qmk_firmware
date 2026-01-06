@@ -54,6 +54,17 @@ export class StockData implements Fetcher {
         }
     }
 
+    async callAlpaca<T>(path: string): Promise<T> {
+        const res = await fetch(`https://data.alpaca.markets/${path}`, {
+            headers: {
+                'APCA-API-KEY-ID': this.#apiKey,
+                'APCA-API-SECRET-KEY': this.#apiSecret,
+            },
+        });
+        if (!res.ok) throw new Error(`request to Alpaca failed: ${res.status} ${await res.text()}`);
+        return await res.json();
+    }
+
     async fetchBars(): Promise<Record<Stock, AlpacaBarResponse>> {
         if (MOCK_API_CALLS) {
             return {
@@ -64,6 +75,9 @@ export class StockData implements Fetcher {
                         { t: '2026-01-02T16:00:00Z', vw: 130, },
                         { t: '2026-01-02T17:00:00Z', vw: 110, },
                         { t: '2026-01-02T18:00:00Z', vw: 90, },
+                        { t: '2026-01-02T20:00:00Z', vw: 150, },
+                        { t: '2026-01-02T21:00:00Z', vw: 150, },
+                        { t: '2026-01-02T22:00:00Z', vw: 1000, },
                     ],
                     next_page_token: null,
                     symbol: 'DDOG'
@@ -86,14 +100,7 @@ export class StockData implements Fetcher {
         const data: Record<Stock, AlpacaBarResponse> = {} as any;
 
         for (const symbol of STOCKS) {
-            const res = await fetch(`https://data.alpaca.markets/v2/stocks/${symbol}/bars?${params}`, {
-                headers: {
-                    'APCA-API-KEY-ID': this.#apiKey,
-                    'APCA-API-SECRET-KEY': this.#apiSecret,
-                },
-            });
-            if (!res.ok) throw new Error(`request to Alpaca bars failed: ${res.status} ${await res.text()}`);
-            data[symbol] = await res.json();
+            data[symbol] = await this.callAlpaca(`v2/stocks/${symbol}/bars?${params}`);
         }
 
         return data;
@@ -107,14 +114,7 @@ export class StockData implements Fetcher {
             };
         }
 
-        const res = await fetch(`https://data.alpaca.markets/v2/stocks/${symbol}/snapshot?feed=iex`, {
-            headers: {
-                'APCA-API-KEY-ID': this.#apiKey,
-                'APCA-API-SECRET-KEY': this.#apiSecret,
-            },
-        });
-        if (!res.ok) throw new Error(`request to Alpaca snapshot failed: ${res.status} ${await res.text()}`);
-        return await res.json();
+        return this.callAlpaca(`v2/stocks/${symbol}/snapshot?feed=iex`);
     }
 
     async refresh(): Promise<void> {
