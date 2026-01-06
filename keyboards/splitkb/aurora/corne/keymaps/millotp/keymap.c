@@ -312,7 +312,7 @@ static void render_stock_graph(single_stock_data *stock) {
 
     // Draw the graph line connecting points
     for (uint8_t i = 0; i < stock->history_length - 1; i++) {
-        oled_draw_line(stock->history[i], 127 - i, stock->history[i + 1], 127 - i - 1);
+        oled_draw_line(31 - stock->history[i], 127 - i, 31 - stock->history[i + 1], 127 - i - 1);
     }
 }
 
