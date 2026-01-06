@@ -4,12 +4,15 @@ import { logger } from './logger.ts';
 const STOCKS = ['DDOG', 'AAPL'] as const;
 type Stock = typeof STOCKS[number];
 
+type AlpacaBar = {
+    t: string;
+    vw: number;
+    o: number,
+    c: number; // close price
+};
+
 type AlpacaBarResponse = {
-    bars: Array<{
-        t: string;
-        vw: number;
-        c: number; // close price
-    }> | null,
+    bars: Array<AlpacaBar> | null,
     next_page_token: string | null;
     symbol: string;
 }
@@ -43,74 +46,32 @@ export class StockData implements Fetcher {
         }
     }
 
-    // Check if US stock market is currently open (simplified check)
-    private isMarketOpen(): boolean {
-        const now = new Date();
-        const utcHour = now.getUTCHours();
-        const utcDay = now.getUTCDay();
-
-        // Market is closed on weekends
-        if (utcDay === 0 || utcDay === 6) return false;
-
-        // NYSE hours: 9:30 AM - 4:00 PM ET = 14:30 - 21:00 UTC (winter) or 13:30 - 20:00 UTC (summer)
-        // Using approximate window: 13:30 - 21:00 UTC
-        const utcMinutes = now.getUTCMinutes();
-        const totalMinutes = utcHour * 60 + utcMinutes;
-
-        return totalMinutes >= 13 * 60 + 30 && totalMinutes < 21 * 60;
-    }
-
-    // Get start date for bar data (today if market open, last trading day if closed)
-    private getStartDate(): string {
-        const now = new Date();
-
-        if (this.isMarketOpen()) {
-            return now.toISOString().split('T')[0];
-        }
-
-        // Go back to find last trading day
-        let daysBack = 1;
-        const day = now.getUTCDay();
-
-        if (day === 0) daysBack = 2; // Sunday -> Friday
-        else if (day === 6) daysBack = 1; // Saturday -> Friday
-
-        const lastTradeDay = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
-        return lastTradeDay.toISOString().split('T')[0];
-    }
-
     async fetchBars(): Promise<Record<Stock, AlpacaBarResponse>> {
         if (MOCK_API_CALLS) {
-            const mockOpen = this.isMarketOpen();
             return {
                 'DDOG': {
-                    bars: mockOpen ? [
-                        { t: '2026-01-02T14:00:00Z', vw: 136.681662, c: 136.50 },
-                        { t: '2026-01-02T15:00:00Z', vw: 133.681842, c: 133.50 },
-                        { t: '2026-01-02T16:00:00Z', vw: 133.15958, c: 133.00 },
-                        { t: '2026-01-02T17:00:00Z', vw: 133.424684, c: 133.30 },
-                        { t: '2026-01-02T18:00:00Z', vw: 132.563116, c: 132.50 },
-                    ] : null,
+                    bars: [
+                        { t: '2026-01-02T14:00:00Z', o: 95, vw: 100, c: 100 },
+                        { t: '2026-01-02T15:00:00Z', o: 100, vw: 110, c: 110 },
+                        { t: '2026-01-02T16:00:00Z', o: 110, vw: 130, c: 130 },
+                        { t: '2026-01-02T17:00:00Z', o: 130, vw: 110, c: 110 },
+                        { t: '2026-01-02T18:00:00Z', o: 110, vw: 90, c: 90 },
+                    ],
                     next_page_token: null,
                     symbol: 'DDOG'
                 },
                 'AAPL': {
-                    bars: mockOpen ? [
-                        { t: '2026-01-02T14:00:00Z', vw: 186.681662, c: 186.50 },
-                        { t: '2026-01-02T15:00:00Z', vw: 185.681842, c: 185.50 },
-                        { t: '2026-01-02T16:00:00Z', vw: 185.15958, c: 185.00 },
-                        { t: '2026-01-02T17:00:00Z', vw: 186.424684, c: 186.30 },
-                        { t: '2026-01-02T18:00:00Z', vw: 187.563116, c: 187.50 },
-                    ] : null,
+                    bars: [],
                     next_page_token: null,
                     symbol: 'AAPL'
                 }
             }
         }
 
+        // the market is open for 6h30m each weekday, we can fit 80 data point on the screen.
+        // we limit to 78 points so that they are each 5 min appart exactly.
         const params = new URLSearchParams({
-            timeframe: "1Hour",
-            start: this.getStartDate(),
+            timeframe: "5Min",
             feed: 'iex',
         });
 
@@ -150,43 +111,64 @@ export class StockData implements Fetcher {
 
     async refresh(): Promise<void> {
         try {
-            const marketOpen = this.isMarketOpen();
             const barData = await this.fetchBars();
 
             for (const [symbol, stock] of (Object.entries(barData) as Array<[Stock, AlpacaBarResponse]>)) {
                 if (!stock.bars || stock.bars.length === 0) {
                     // No bar data - fetch latest trade for last known price
-                    try {
-                        const latestTrade = await this.fetchLatestTrade(symbol);
-                        this.stocks[symbol] = {
-                            symbol: symbol,
-                            open: false,
-                            currentPrice: latestTrade.trade.p,
-                            dayChangePercent: 0,
-                            hourlyHistory: [],
-                        };
-                    } catch {
-                        // Keep previous data if we can't fetch latest
-                        if (!this.stocks[symbol]) {
-                            this.stocks[symbol] = {
-                                symbol: symbol,
-                                open: false,
-                                currentPrice: 0,
-                                dayChangePercent: 0,
-                                hourlyHistory: [],
-                            };
-                        }
-                    }
+                    const latestTrade = await this.fetchLatestTrade(symbol);
+                    this.stocks[symbol] = {
+                        symbol: symbol,
+                        open: false,
+                        currentPrice: latestTrade.trade.p,
+                        dayChangePercent: 0,
+                        hourlyHistory: [],
+                    };
+
                     continue;
                 }
 
-                const openPrice = stock.bars[0].vw;
+                // discard data outside of open hours (14h30-21h UTC)
+                stock.bars = stock.bars.filter(b => {
+                    const t = new Date(b.t);
+                    const h = t.getHours();
+                    const m = t.getMinutes();
+                    return (h > 14 || (h === 14 && m >= 30)) && h <= 21;
+                });
+
+                // sometime there are hole in the data, we can fill it with a linear interpolation.
+                const inter = [stock.bars[0]];
+                for (let i = 1; i < stock.bars.length; i++) {
+                    const previousTime = new Date(stock.bars[i - 1].t).getTime();
+                    let time = new Date(stock.bars[i].t).getTime();
+                    const diff = time - previousTime;
+                    let filled = 1;
+                    while (time - previousTime > 6 * 60 * 1000) {
+                        // we have a gap to fill
+                        const t = 5 * 60 * 1000 * filled / diff;
+                        inter.push({
+                            t: new Date(previousTime + 5 * 60 * 1000 * filled).toISOString(),
+                            vw: t * stock.bars[i].vw + (1 - t) * stock.bars[i - 1].vw,
+                            o: stock.bars[i - 1].o,
+                            c: stock.bars[i - 1].c,
+                        })
+                        time -= 5 * 60 * 1000;
+                        filled++;
+                    }
+                    inter.push(stock.bars[i]);
+                }
+                stock.bars = inter;
+
+                const openPrice = stock.bars[0].o;
                 const currentPrice = stock.bars.at(-1)!.vw;
-                const dayChange = ((currentPrice - openPrice) / openPrice) * 10000; // basis points * 100
+                const dayChange = ((currentPrice - openPrice) / openPrice) * 100;
+
+                // console.log(stock.bars.map(b => ({ t: b.t, p: b.vw })));
+                console.log(`opening: ${openPrice}    current: ${currentPrice}   change: ${dayChange}  points: ${stock.bars.length}`);
 
                 this.stocks[symbol] = {
                     symbol: symbol,
-                    open: marketOpen,
+                    open: true,
                     currentPrice: currentPrice,
                     dayChangePercent: dayChange,
                     hourlyHistory: stock.bars.map((b) => b.vw),
@@ -202,28 +184,52 @@ export class StockData implements Fetcher {
         for (const stock of Object.values(this.stocks)) {
             const payload = Buffer.alloc(32);
             // first byte is ignored
-            payload.writeUInt8(DATA_TYPE.STOCK, 1); // stock data type
+            payload.writeUInt8(DATA_TYPE.STOCK_1, 1);
             // stock index
             payload.writeUInt8(STOCKS.indexOf(stock.symbol), 2);
             payload.writeUint8(stock.open ? 1 : 0, 3);
-            payload.writeInt32BE(Math.round(stock.currentPrice * 100), 4);
-            payload.writeInt32BE(Math.round(stock.dayChangePercent * 100), 8);
-            payload.writeUInt8(stock.hourlyHistory.length, 12);
-            // we have 12 bytes remaining, we encode each hour as 5 bits, so we can encode the last 20 hours.
+            // price on 3 bytes
+            const price = Math.round(stock.currentPrice * 100);
+            payload.writeUint16BE(price >> 8, 4);
+            payload.writeUint8(price & 0xFF, 6);
+            payload.writeInt16BE(Math.round(stock.dayChangePercent * 100), 7);
+            payload.writeUInt8(stock.hourlyHistory.length, 8);
+            // we have 22 bytes remaining, we encode each hour as 5 bits, so we can encode the first 35 history points
+            const min = Math.min(...stock.hourlyHistory);
             const max = Math.max(...stock.hourlyHistory);
             let bitPos = 0;
-            for (const price of stock.hourlyHistory) {
-                let normalized = Math.floor(price / max * 32);
+            for (const price of stock.hourlyHistory.slice(0, 35)) {
+                let normalized = Math.floor((price - min) / (max - min) * 32); // normalize between 0-31
                 for (let i = 0; i < 5; i++, bitPos++) {
                     if (normalized & 1) {
                         const byteIndex = bitPos >> 3;
                         const bitIndex = bitPos & 7;
-                        payload[byteIndex + 13] |= 1 << bitIndex;
+                        payload[byteIndex + 9] |= 1 << bitIndex;
                     }
                     normalized >>= 1;
                 }
             }
             payloads.push(payload);
+
+            if (stock.hourlyHistory.length >= 35) {
+                // encode the rest of the history
+                const rest = Buffer.alloc(32);
+                rest.writeUInt8(DATA_TYPE.STOCK_2, 1);
+                rest.writeUInt8(STOCKS.indexOf(stock.symbol), 2);
+                bitPos = 0;
+                for (const price of stock.hourlyHistory.slice(35, 79)) {
+                    let normalized = Math.floor((price - min) / (max - min) * 32); // normalize between 0-31
+                    for (let i = 0; i < 5; i++, bitPos++) {
+                        if (normalized & 1) {
+                            const byteIndex = bitPos >> 3;
+                            const bitIndex = bitPos & 7;
+                            rest[byteIndex + 3] |= 1 << bitIndex;
+                        }
+                        normalized >>= 1;
+                    }
+                }
+                payloads.push(rest);
+            }
         }
 
         return payloads;

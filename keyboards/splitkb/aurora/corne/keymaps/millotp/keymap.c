@@ -79,7 +79,8 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 // Data types for HID communication
 enum data_type {
     INVALID,
-    STOCK_DATA_TYPE,
+    STOCK_1_DATA_TYPE, // index, market open, current price, day change percentage, history length, history 22 bytes = 35 points
+    STOCK_2_DATA_TYPE, // index, remaining history
     METRO_DATA_TYPE,
     METRO_MESSAGE_1_DATA_TYPE,
     METRO_MESSAGE_2_DATA_TYPE,
@@ -88,41 +89,25 @@ enum data_type {
 
 typedef struct {
     enum stock_symbols index;
-    char               symbol[5];
+    char              *symbol;
     bool               open;
     uint32_t           current_price;
-    int32_t            day_change_percentage; // can be negative
+    int16_t            day_change_percentage;
     uint8_t            history_length;
-    uint8_t            history[24]; // normalized 0-31 values
+    uint8_t            history[80]; // normalized 0-31 values
 } single_stock_data;
 
-single_stock_data  stock_data[NUMBER_OF_STOCKS];
-enum stock_symbols selected_stock = DDOG;
-
-// Draw a line between two points using Bresenham's algorithm
-static void oled_draw_line(int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
-    int16_t dx = abs(x1 - x0);
-    int16_t dy = -abs(y1 - y0);
-    int16_t sx = x0 < x1 ? 1 : -1;
-    int16_t sy = y0 < y1 ? 1 : -1;
-    int16_t err = dx + dy;
-
-    while (true) {
-        oled_write_pixel(x0, y0, true);
-
-        if (x0 == x1 && y0 == y1) break;
-
-        int16_t e2 = 2 * err;
-        if (e2 >= dy) {
-            err += dy;
-            x0 += sx;
-        }
-        if (e2 <= dx) {
-            err += dx;
-            y0 += sy;
-        }
-    }
-}
+enum stock_symbols selected_stock               = DDOG;
+single_stock_data  stock_data[NUMBER_OF_STOCKS] = {
+     {
+         .index  = DDOG,
+         .symbol = "DDOG",
+    },
+     {
+         .index  = AAPL,
+         .symbol = "AAPL",
+    },
+};
 
 // Decode history from packed 5-bit format in HID payload
 static void decode_stock_history(uint8_t *data, uint8_t history_length, uint8_t *history_out) {
@@ -132,7 +117,7 @@ static void decode_stock_history(uint8_t *data, uint8_t history_length, uint8_t 
         uint8_t value = 0;
         for (uint8_t b = 0; b < 5; b++, bit_pos++) {
             uint8_t byte_idx = bit_pos >> 3;
-            uint8_t bit_idx = bit_pos & 7;
+            uint8_t bit_idx  = bit_pos & 7;
             if (data[byte_idx] & (1 << bit_idx)) {
                 value |= (1 << b);
             }
@@ -178,16 +163,20 @@ void raw_hid_receive(uint8_t *data, uint8_t length) {
     switch (type) {
         case INVALID:
             break;
-        case STOCK_DATA_TYPE: {
-            uint8_t index           = data[1];
-            stock_data[index].index = index;
-            strncpy(stock_data[index].symbol, index == 0 ? "DDOG" : "AAPL", 5);
+        case STOCK_1_DATA_TYPE: {
+            uint8_t index                           = data[1];
             stock_data[index].open                  = data[2];
-            stock_data[index].current_price         = (uint32_t)data[3] << 24 | (uint32_t)data[4] << 16 | (uint32_t)data[5] << 8 | data[6];
-            stock_data[index].day_change_percentage = (int32_t)((uint32_t)data[7] << 24 | (uint32_t)data[8] << 16 | (uint32_t)data[9] << 8 | data[10]);
-            stock_data[index].history_length        = data[11];
+            stock_data[index].current_price         = (uint32_t)data[3] << 16 | (uint32_t)data[4] << 8 | data[5];
+            stock_data[index].day_change_percentage = (int16_t)((uint16_t)data[6] << 8 | data[7]);
+            stock_data[index].history_length        = data[8];
             // Decode the packed 5-bit history values
-            decode_stock_history(data + 12, stock_data[index].history_length, stock_data[index].history);
+            decode_stock_history(data + 9, 22, stock_data[index].history);
+            break;
+        }
+        case STOCK_2_DATA_TYPE: {
+            uint8_t index = data[1];
+            // Decode the packed 5-bit history values
+            decode_stock_history(data + 2, 29, stock_data[index].history + 35);
             break;
         }
         case METRO_DATA_TYPE:
@@ -282,54 +271,54 @@ static void render_metro_line_icon(char line) {
     }
 }
 
+// Draw a line between two points using Bresenham's algorithm
+static void oled_draw_line(int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
+    int16_t dx  = abs(x1 - x0);
+    int16_t dy  = -abs(y1 - y0);
+    int16_t sx  = x0 < x1 ? 1 : -1;
+    int16_t sy  = y0 < y1 ? 1 : -1;
+    int16_t err = dx + dy;
+
+    while (true) {
+        oled_write_pixel(x0, y0, true);
+
+        if (x0 == x1 && y0 == y1) break;
+
+        int16_t e2 = 2 * err;
+        if (e2 >= dy) {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
 // Draw the stock price graph
 // Graph area: x=0-31, y=48-127 (lines 6-15, 80 pixels tall)
 static void render_stock_graph(single_stock_data *stock) {
+    // clear the graph
+    for (uint8_t x = 0; x < 32; x++) {
+        for (uint8_t y = 48; y < 128; y++) {
+            oled_write_pixel(x, y, false);
+        }
+    }
     if (stock->history_length < 2) return;
 
-    // Graph dimensions
-    const uint8_t graph_y_start = 48;  // Start at line 6 (6 * 8 = 48)
-    const uint8_t graph_height = 72;   // 9 lines worth of pixels
-    const uint8_t graph_width = 30;    // Leave 1px margin on each side
-
-    // Find min/max for scaling (values are already 0-31)
-    uint8_t min_val = 31, max_val = 0;
-    for (uint8_t i = 0; i < stock->history_length; i++) {
-        if (stock->history[i] < min_val) min_val = stock->history[i];
-        if (stock->history[i] > max_val) max_val = stock->history[i];
-    }
-
-    // Avoid division by zero
-    uint8_t range = max_val - min_val;
-    if (range == 0) range = 1;
-
-    // Calculate x spacing between points
-    uint8_t x_step = graph_width / (stock->history_length - 1);
-    if (x_step == 0) x_step = 1;
-
     // Draw the graph line connecting points
-    int16_t prev_x = 1;
-    int16_t prev_y = graph_y_start + graph_height - 1 -
-                     ((stock->history[0] - min_val) * (graph_height - 1) / range);
-
-    for (uint8_t i = 1; i < stock->history_length; i++) {
-        int16_t x = 1 + (i * graph_width) / (stock->history_length - 1);
-        int16_t y = graph_y_start + graph_height - 1 -
-                    ((stock->history[i] - min_val) * (graph_height - 1) / range);
-
-        oled_draw_line(prev_x, prev_y, x, y);
-
-        prev_x = x;
-        prev_y = y;
+    for (uint8_t i = 0; i < stock->history_length - 1; i++) {
+        oled_draw_line(stock->history[i], 127 - i, stock->history[i + 1], 127 - i - 1);
     }
 }
 
 // Render the master (left) display with stock info
 static void render_master(void) {
-    char buf[10];
+    char               buf[6];
     single_stock_data *stock = &stock_data[selected_stock];
 
-    // Lines 0-2: Logo (24 pixels, 3 pages)
+    // Lines 0-2: Logo
     oled_write_raw_P(stocks_logo[stock->index], sizeof(stocks_logo[stock->index]));
 
     // Line 3: Symbol
@@ -337,20 +326,27 @@ static void render_master(void) {
     oled_write_ln(stock->symbol, false);
 
     // Line 4: Current price (format: $XXX.XX)
-    uint32_t dollars = stock->current_price / 100;
-    uint32_t cents = stock->current_price % 100;
-    snprintf(buf, sizeof(buf), "%3lu.%02lu", (unsigned long)dollars, (unsigned long)cents);
-    oled_write_ln(buf, false);
+    uint16_t dollars = stock->current_price / 100;
+    uint16_t cents   = (stock->current_price / 10) % 10;
+    snprintf(buf, sizeof(buf), "%3d.%d", dollars, cents);
+    oled_write(buf, false);
 
     if (stock->open) {
         // Line 5: Day change percentage
         int32_t change = stock->day_change_percentage;
-        char sign = change >= 0 ? '+' : '-';
+        char    sign   = change >= 0 ? '+' : '-';
         if (change < 0) change = -change;
-        uint32_t change_int = change / 100;
-        uint32_t change_dec = change % 100;
-        snprintf(buf, sizeof(buf), "%c%lu.%02lu%%", sign, (unsigned long)change_int, (unsigned long)change_dec);
-        oled_write_ln(buf, false);
+        if (change > 1000) {
+            // more than 10%
+            uint16_t change_int = change / 100;
+            uint16_t change_dec = (change / 10) % 10;
+            snprintf(buf, sizeof(buf), "%c%2d.%d%%", sign, change_int, change_dec);
+        } else {
+            uint16_t change_int = change / 100;
+            uint16_t change_dec = change % 100;
+            snprintf(buf, sizeof(buf), "%c%d.%02d%%", sign, change_int, change_dec);
+        }
+        oled_write(buf, false);
 
         // Lines 6-15: Stock price graph
         render_stock_graph(stock);
@@ -465,17 +461,22 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
         raw_hid_send(buf, 32);
     }
 
-    show_metro_message = record->event.pressed && keycode == SHOW_METRO;
-
-    if (record->event.pressed) {
-        switch (keycode) {
-            case PREVIOUS_STOCK:
+    uint8_t empty_buf[32];
+    switch (keycode) {
+        case SHOW_METRO:
+            empty_buf[0] = record->event.pressed;
+            transaction_rpc_send(SHOW_METRO_MESSAGE, 32, &empty_buf);
+            break;
+        case PREVIOUS_STOCK:
+            if (record->event.pressed) {
                 selected_stock = (selected_stock + NUMBER_OF_STOCKS - 1) % NUMBER_OF_STOCKS;
-                break;
-            case NEXT_STOCK:
+            }
+            break;
+        case NEXT_STOCK:
+            if (record->event.pressed) {
                 selected_stock = (selected_stock + 1) % NUMBER_OF_STOCKS;
-                break;
-        }
+            }
+            break;
     }
 
     return true;
@@ -486,8 +487,13 @@ void user_hid_data_in_slave_handler(uint8_t in_buflen, const void *in_data, uint
     raw_hid_receive((uint8_t *)in_data, in_buflen);
 }
 
+void user_show_metro_message_slave_handler(uint8_t in_buflen, const void *in_data, uint8_t out_buflen, void *out_data) {
+    show_metro_message = ((uint8_t *)in_data)[0];
+}
+
 void keyboard_post_init_user(void) {
     transaction_register_rpc(HID_DATA_IN, user_hid_data_in_slave_handler);
+    transaction_register_rpc(SHOW_METRO_MESSAGE, user_show_metro_message_slave_handler);
 }
 
 #endif // OLED_ENABLE
