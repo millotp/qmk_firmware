@@ -2,8 +2,8 @@ import { type Fetcher, DATA_TYPE, MOCK_API_CALLS } from "./fetcher.ts";
 import { logger } from "./logger.ts";
 
 const METRO_LINES = {
-    // '6': 'line:IDFM:C01376',
-    // '8': 'line:IDFM:C01378',
+    '6': 'line:IDFM:C01376',
+    '8': 'line:IDFM:C01378',
     '9': 'line:IDFM:C01379'
 } as const;
 

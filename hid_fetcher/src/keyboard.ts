@@ -54,14 +54,21 @@ export function isKeyboardActive(): boolean {
 }
 
 export async function sendToKeyboard(packet: Buffer): Promise<void> {
-    // spam the packets for macos
+    // On macOS, node-hid does NOT want a report ID prefix for devices with report ID 0
+    // The current packet format is [0x00, type, data...] (32 bytes) - on macOS we need:
+    // - Skip byte 0 (the 0x00 report ID)
+    // - But still send exactly 32 bytes (QMK expects RAW_EPSIZE = 32)
+    // Solution: shift data left and pad with 0x00 at the end
+    let actualPacket: Buffer;
     if (process.platform === 'darwin') {
-        for (let i = 0; i < 5; i++) {
-            await keyboard?.write(packet);
-        }
+        actualPacket = Buffer.alloc(32);
+        packet.copy(actualPacket, 0, 1);  // Copy bytes 1-31 from packet to bytes 0-30 of actualPacket
+        // Byte 31 is already 0x00 from Buffer.alloc
     } else {
-        await keyboard?.write(packet);
+        actualPacket = packet;
     }
+
+    await keyboard?.write(actualPacket);
 }
 
 export async function waitForKeyboard(): Promise<void> {
