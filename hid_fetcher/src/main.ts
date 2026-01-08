@@ -9,7 +9,7 @@ import { MetroData } from './metro.ts';
 import { WeatherData } from './weather.ts';
 import { sleep } from './sleep.ts';
 import { logger } from './logger.ts';
-import { isKeyboardActive, sendToKeyboard, waitForKeyboard } from './keyboard.ts';
+import { isKeyboardActive, isKeyboardConnected, sendToKeyboard, waitForKeyboard } from './keyboard.ts';
 import { StockData } from './stock.ts';
 
 dotenv.config({ quiet: true });
@@ -44,10 +44,13 @@ async function main() {
         // sleep for 10 minutes
         await sleep(10 * 60);
 
+        if (!isKeyboardConnected()) {
+            logger.debug("keyboard is not connected, skipping refresh");
+            continue;
+        }
+
         if (!isKeyboardActive()) {
             logger.debug("keyboard is inactive, skip refresh");
-            await sleep(1 * 60);
-
             continue;
         }
 

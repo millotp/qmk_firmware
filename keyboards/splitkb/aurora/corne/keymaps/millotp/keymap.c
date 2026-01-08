@@ -30,6 +30,7 @@
 
 enum my_keycodes {
     SHOW_METRO = SAFE_RANGE,
+    SHOW_STATIONS,
     PREVIOUS_STOCK,
     NEXT_STOCK,
 };
@@ -65,9 +66,9 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
                            KC_LGUI, MO(3), KC_SPC,        KC_ENT, _______, KC_RALT
     ),
     [_ADJUST] = LAYOUT_split_3x6_3(
-      QK_BOOT, XXXXXXX, XXXXXXX, XXXXXXX, XXXXXXX, XXXXXXX,        XXXXXXX,    XXXXXXX,        XXXXXXX,    XXXXXXX, XXXXXXX, XXXXXXX,
-      RM_TOGG, RM_HUEU, RM_SATU, RM_VALU, XXXXXXX, XXXXXXX,        SHOW_METRO, PREVIOUS_STOCK, NEXT_STOCK, XXXXXXX, XXXXXXX, XXXXXXX,
-      RM_NEXT, RM_HUED, RM_SATD, RM_VALD, XXXXXXX, XXXXXXX,        XXXXXXX,    XXXXXXX,        XXXXXXX,    XXXXXXX, XXXXXXX, XXXXXXX,
+      QK_BOOT, XXXXXXX, XXXXXXX, XXXXXXX, XXXXXXX, XXXXXXX,        XXXXXXX,       XXXXXXX,        XXXXXXX,    XXXXXXX, XXXXXXX, XXXXXXX,
+      RM_TOGG, RM_HUEU, RM_SATU, RM_VALU, XXXXXXX, XXXXXXX,        SHOW_METRO,    PREVIOUS_STOCK, NEXT_STOCK, XXXXXXX, XXXXXXX, XXXXXXX,
+      RM_NEXT, RM_HUED, RM_SATD, RM_VALD, XXXXXXX, XXXXXXX,        SHOW_STATIONS, XXXXXXX,        XXXXXXX,    XXXXXXX, XXXXXXX, XXXXXXX,
 
                                   KC_LGUI, _______, KC_SPC,        KC_ENT, _______, KC_RALT
     )
@@ -82,8 +83,8 @@ enum data_type {
     STOCK_1_DATA_TYPE, // index, market open, current price, day change percentage, history length, history 22 bytes = 35 points
     STOCK_2_DATA_TYPE, // index, remaining history
     METRO_DATA_TYPE,
-    METRO_MESSAGE_1_DATA_TYPE,
-    METRO_MESSAGE_2_DATA_TYPE,
+    METRO_MESSAGE_DATA_TYPE,
+    METRO_STATION_DATA_TYPE,
     WEATHER_DATA_TYPE,
 };
 
@@ -153,9 +154,12 @@ static struct {
     uint32_t last_update;
     char     impacted_line;
     char     message[29 * 3 + 1];
+    uint8_t  station_count;
+    char     stations[5][17]; // up to 5 stations, 16 chars each + null
 } metro_data = {0};
 
-bool show_metro_message = false;
+bool show_metro_message  = false;
+bool show_metro_stations = false;
 
 void raw_hid_receive(uint8_t *data, uint8_t length) {
     // data[0] is the actual first byte (report ID is stripped)
@@ -187,12 +191,13 @@ void raw_hid_receive(uint8_t *data, uint8_t length) {
             metro_data.impacted_line = data[1];
             strncpy(metro_data.message, (char *)data + 2, 29);
             break;
-        case METRO_MESSAGE_1_DATA_TYPE:
-            strncpy(metro_data.message + 29, (char *)data + 2, 29);
+        case METRO_MESSAGE_DATA_TYPE: {
+            uint8_t offset = data[2];
+            if (offset < sizeof(metro_data.message) - 28) {
+                strncpy(metro_data.message + offset, (char *)data + 3, 28);
+            }
             break;
-        case METRO_MESSAGE_2_DATA_TYPE:
-            strncpy(metro_data.message + 29 * 2, (char *)data + 2, 29);
-            break;
+        }
         case WEATHER_DATA_TYPE:
             weather_data.condition   = data[1];
             weather_data.temperature = (int16_t)data[2] << 8 | data[3];
@@ -204,6 +209,18 @@ void raw_hid_receive(uint8_t *data, uint8_t length) {
             strncpy(weather_data.sunset, (char *)data + 15, 5);
             weather_data.valid = true;
             break;
+        case METRO_STATION_DATA_TYPE: {
+            // data[1] = line, data[2] = station_index, data[3] = total_count, data[4-19] = station (16 bytes)
+            uint8_t station_idx   = data[2];
+            uint8_t total_count   = data[3];
+            if (station_idx < 5) {
+                memcpy(metro_data.stations[station_idx], data + 4, 16);
+                metro_data.stations[station_idx][16] = '\0';
+            }
+            metro_data.station_count = total_count < 5 ? total_count : 5;
+            metro_data.last_update   = timer_read32();
+            break;
+        }
     }
 
     if (is_keyboard_master()) {
@@ -213,7 +230,14 @@ void raw_hid_receive(uint8_t *data, uint8_t length) {
 }
 
 bool metro_has_incident(void) {
-    return timer_read32() - metro_data.last_update < 10 * 60 * 1000;
+    bool has_incident = metro_data.last_update != 0 && timer_read32() - metro_data.last_update < 10 * 60 * 1000;
+    if (!has_incident && metro_data.station_count > 0) {
+        // Clear station data when incident is over
+        metro_data.station_count = 0;
+        memset(metro_data.stations, 0, sizeof(metro_data.stations));
+        memset(metro_data.message, 0, sizeof(metro_data.message));
+    }
+    return has_incident;
 }
 
 // Weather icons (3 chars wide x 2 rows tall)
@@ -272,6 +296,14 @@ static void render_metro_line_icon(char line) {
         case '9':
             oled_write_P(icon_line_9, false);
             break;
+    }
+}
+
+// Write text vertically (one character per line, centered)
+static void oled_write_vertical(const char *text, uint8_t start_line) {
+    for (uint8_t i = 0; text[i] != '\0' && (start_line + i) < 16; i++) {
+        oled_set_cursor(2, start_line + i); // center horizontally (column 2 of 5)
+        oled_write_char(text[i], false);
     }
 }
 
@@ -384,6 +416,14 @@ static void render_slave(void) {
         return;
     }
 
+    if (show_metro_stations && metro_has_incident() && metro_data.station_count > 0) {
+        // Show impacted stations list vertically, cycling through them
+        uint8_t station_idx = (timer_read32() / 3000) % metro_data.station_count;
+        render_metro_line_icon(metro_data.impacted_line);
+        oled_write_vertical(metro_data.stations[station_idx], 2);
+        return;
+    }
+
     // Line 0-1: Weather icon (centered)
     render_weather_icon(weather_data.condition);
 
@@ -477,6 +517,10 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             empty_buf[0] = record->event.pressed;
             transaction_rpc_send(SHOW_METRO_MESSAGE, 32, &empty_buf);
             break;
+        case SHOW_STATIONS:
+            empty_buf[0] = record->event.pressed;
+            transaction_rpc_send(SHOW_METRO_STATIONS, 32, &empty_buf);
+            break;
         case PREVIOUS_STOCK:
             if (record->event.pressed) {
                 selected_stock = (selected_stock + NUMBER_OF_STOCKS - 1) % NUMBER_OF_STOCKS;
@@ -501,9 +545,14 @@ void user_show_metro_message_slave_handler(uint8_t in_buflen, const void *in_dat
     show_metro_message = ((uint8_t *)in_data)[0];
 }
 
+void user_show_metro_stations_slave_handler(uint8_t in_buflen, const void *in_data, uint8_t out_buflen, void *out_data) {
+    show_metro_stations = ((uint8_t *)in_data)[0];
+}
+
 void keyboard_post_init_user(void) {
     transaction_register_rpc(HID_DATA_IN, user_hid_data_in_slave_handler);
     transaction_register_rpc(SHOW_METRO_MESSAGE, user_show_metro_message_slave_handler);
+    transaction_register_rpc(SHOW_METRO_STATIONS, user_show_metro_stations_slave_handler);
 }
 
 #endif // OLED_ENABLE

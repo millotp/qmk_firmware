@@ -7,15 +7,25 @@ const METRO_LINES = {
     '9': 'line:IDFM:C01379'
 } as const;
 
+// Abbreviate station names to fit 16-char vertical OLED display
+function abbreviateStation(name: string): string {
+    // Remove common prefixes and normalize
+    const normalized = name
+        .normalize("NFD").replace(/\p{Diacritic}/gu, "") // remove accents
+        .replace(/^(Porte de |Mairie de |Place |Gare de )/i, '')
+        .toUpperCase();
+    return normalized.slice(0, 16);
+}
 
 export class MetroData implements Fetcher {
     private lines: Record<keyof typeof METRO_LINES, {
-        name: string;
+        line: string;
         incident: false;
     } | {
-        name: string;
+        line: string;
         incident: true;
         message: string;
+        stations: string[];
     }> = {} as any;
 
     #apiKey: string;
@@ -40,6 +50,19 @@ export class MetroData implements Fetcher {
                                         types: [
                                             "title"
                                         ]
+                                    }
+                                }
+                            ],
+                            impacted_objects: [
+                                {
+                                    pt_object: {
+                                        stop_point: { name: "Mairie de Montreuil" }
+                                    }
+                                },
+                                {
+                                    impacted_section: {
+                                        from: { stop_area: { name: "Porte de Montreuil" } },
+                                        to: { stop_area: { name: "Robespierre" } }
                                     }
                                 }
                             ]
@@ -75,6 +98,28 @@ export class MetroData implements Fetcher {
         return message;
     }
 
+    findStations(data: any): string[] {
+        const stations = new Set<string>();
+
+        for (const disruption of data.disruptions) {
+            for (const impacted of disruption.impacted_objects || []) {
+                // Direct stop point
+                if (impacted.pt_object?.stop_point?.name) {
+                    stations.add(abbreviateStation(impacted.pt_object.stop_point.name));
+                }
+                // Impacted section (from/to)
+                if (impacted.impacted_section?.from?.stop_area?.name) {
+                    stations.add(abbreviateStation(impacted.impacted_section.from.stop_area.name));
+                }
+                if (impacted.impacted_section?.to?.stop_area?.name) {
+                    stations.add(abbreviateStation(impacted.impacted_section.to.stop_area.name));
+                }
+            }
+        }
+
+        return Array.from(stations).slice(0, 5);
+    }
+
     async refresh(): Promise<void> {
         try {
             const data = await this.makeCall();
@@ -82,13 +127,14 @@ export class MetroData implements Fetcher {
             for (line in METRO_LINES) {
                 if (line in data && 'disruptions' in data[line] && data[line].disruptions.length > 0) {
                     this.lines[line] = {
-                        name: line,
+                        line: line,
                         incident: true,
                         message: this.findMessage(data[line]),
+                        stations: this.findStations(data[line]),
                     }
                 } else {
                     this.lines[line] = {
-                        name: line,
+                        line: line,
                         incident: false
                     };
                 }
@@ -103,24 +149,29 @@ export class MetroData implements Fetcher {
         for (const incidents of Object.values(this.lines).filter(l => l.incident)) {
             const payload = Buffer.alloc(32);
             payload.writeUint8(DATA_TYPE.METRO, 1);
-            payload.write(incidents.name, 2, 1, 'utf-8');
+            payload.write(incidents.line, 2, 1, 'utf-8');
             payload.write(incidents.message, 3, 29, 'utf-8');
             payloads.push(payload);
 
-            if (incidents.message.length > 29) {
+            for (let offset = 29; offset < incidents.message.length; offset += 28) {
                 const message = Buffer.alloc(32);
-                message.writeUint8(DATA_TYPE.METRO_MESSAGE_1, 1);
-                message.write(incidents.name, 2, 1, 'utf-8');
-                message.write(incidents.message.slice(29), 3, 29, 'utf-8');
+                message.writeUint8(DATA_TYPE.METRO_MESSAGE, 1);
+                message.write(incidents.line, 2, 1, 'utf-8');
+                message.writeUint8(offset, 3);
+                message.write(incidents.message.slice(offset, offset + 28), 4, 28, 'utf-8');
                 payloads.push(message);
             }
 
-            if (incidents.message.length > 29 * 2) {
-                const message = Buffer.alloc(32);
-                message.writeUint8(DATA_TYPE.METRO_MESSAGE_2, 1);
-                message.write(incidents.name, 2, 1, 'utf-8');
-                message.write(incidents.message.slice(29 * 2), 3, 29, 'utf-8');
-                payloads.push(message);
+            // Send station list packets (one station per packet with 16 chars each)
+            // Format: [type, line, station_index, total_count, station_name(16)]
+            for (let i = 0; i < incidents.stations.length; i++) {
+                const stationPayload = Buffer.alloc(32);
+                stationPayload.writeUint8(DATA_TYPE.METRO_STATION, 1);
+                stationPayload.write(incidents.line, 2, 1, 'utf-8');
+                stationPayload.writeUint8(i, 3);  // station index
+                stationPayload.writeUint8(incidents.stations.length, 4);  // total count
+                stationPayload.write(incidents.stations[i], 5, 'utf-8');
+                payloads.push(stationPayload);
             }
         }
 

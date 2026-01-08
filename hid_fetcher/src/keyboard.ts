@@ -49,6 +49,10 @@ function attachHooks() {
     });
 }
 
+export function isKeyboardConnected(): boolean {
+    return keyboard !== null;
+}
+
 export function isKeyboardActive(): boolean {
     return Date.now() - lastHeartbeat < 10 * 60 * 1000;
 }
