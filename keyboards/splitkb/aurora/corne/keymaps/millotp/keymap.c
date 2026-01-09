@@ -211,8 +211,8 @@ void raw_hid_receive(uint8_t *data, uint8_t length) {
             break;
         case METRO_STATION_DATA_TYPE: {
             // data[1] = line, data[2] = station_index, data[3] = total_count, data[4-19] = station (16 bytes)
-            uint8_t station_idx   = data[2];
-            uint8_t total_count   = data[3];
+            uint8_t station_idx = data[2];
+            uint8_t total_count = data[3];
             if (station_idx < 5) {
                 memcpy(metro_data.stations[station_idx], data + 4, 16);
                 metro_data.stations[station_idx][16] = '\0';
@@ -299,10 +299,10 @@ static void render_metro_line_icon(char line) {
     }
 }
 
-// Write text vertically (one character per line, centered)
-static void oled_write_vertical(const char *text, uint8_t start_line) {
+// Write text vertically (one character per line)
+static void oled_write_vertical(const char *text, uint8_t col, uint8_t start_line) {
     for (uint8_t i = 0; text[i] != '\0' && (start_line + i) < 16; i++) {
-        oled_set_cursor(2, start_line + i); // center horizontally (column 2 of 5)
+        oled_set_cursor(col, start_line + i);
         oled_write_char(text[i], false);
     }
 }
@@ -411,17 +411,23 @@ static void render_slave(void) {
         return;
     }
 
-    if (show_metro_message && metro_has_incident()) {
-        oled_write(metro_data.message, false);
-        return;
-    }
+    if (metro_has_incident()) {
+        if (show_metro_message) {
+            oled_write(metro_data.message, false);
+            return;
+        }
 
-    if (show_metro_stations && metro_has_incident() && metro_data.station_count > 0) {
-        // Show impacted stations list vertically, cycling through them
-        uint8_t station_idx = (timer_read32() / 3000) % metro_data.station_count;
-        render_metro_line_icon(metro_data.impacted_line);
-        oled_write_vertical(metro_data.stations[station_idx], 2);
-        return;
+        if (show_metro_stations && metro_data.station_count > 0) {
+            // Show impacted stations list vertically, cycling through them
+            clear_stock_graph(); // works for clearing the bottom
+            uint8_t page_idx = (timer_read32() / 2000) % (metro_data.station_count / 2);
+            render_metro_line_icon(metro_data.impacted_line);
+            oled_write_vertical(metro_data.stations[page_idx * 2], 0, 0);
+            if (page_idx * 2 + 1 < metro_data.station_count) {
+                oled_write_vertical(metro_data.stations[page_idx * 2 + 1], 4, 0);
+            }
+            return;
+        }
     }
 
     // Line 0-1: Weather icon (centered)
@@ -542,10 +548,12 @@ void user_hid_data_in_slave_handler(uint8_t in_buflen, const void *in_data, uint
 }
 
 void user_show_metro_message_slave_handler(uint8_t in_buflen, const void *in_data, uint8_t out_buflen, void *out_data) {
+    if (metro_has_incident()) oled_clear();
     show_metro_message = ((uint8_t *)in_data)[0];
 }
 
 void user_show_metro_stations_slave_handler(uint8_t in_buflen, const void *in_data, uint8_t out_buflen, void *out_data) {
+    if (metro_has_incident()) oled_clear();
     show_metro_stations = ((uint8_t *)in_data)[0];
 }
 
