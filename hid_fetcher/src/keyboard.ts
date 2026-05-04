@@ -1,10 +1,12 @@
 import hid from 'node-hid';
 import { logger } from './logger.ts';
 import { sleep } from './sleep.ts';
-import { refreshAndSend } from './main.ts';
 
 let keyboard: hid.HIDAsync | null;
 let lastHeartbeat = Date.now();
+
+/** Set on first successful `waitForKeyboard(onReady)`; reused after reconnect. */
+let registeredOnReady: (() => Promise<void>) | undefined;
 
 const LOCAL_DEV = false;
 
@@ -75,20 +77,30 @@ export async function sendToKeyboard(packet: Buffer): Promise<void> {
     await keyboard?.write(actualPacket);
 }
 
-export async function waitForKeyboard(): Promise<void> {
+export async function waitForKeyboard(onReady?: () => Promise<void>): Promise<void> {
+    if (onReady) {
+        registeredOnReady = onReady;
+    }
+    const runReady = registeredOnReady;
+
     while (true) {
         if (keyboard) {
-            // keyboard is already set
             return;
         }
         try {
             keyboard = await getKeyboard();
-            logger.info(`keyboard found, sending data`);
+            logger.info('keyboard found, sending data');
             attachHooks();
-            refreshAndSend();
+            if (runReady) {
+                try {
+                    await runReady();
+                } catch (err) {
+                    logger.error(`initial refresh failed: ${err}`);
+                }
+            }
             return;
-        } catch (err) {
-            // ignore errors
+        } catch {
+            // device not present yet
         }
 
         await sleep(3 * 60);

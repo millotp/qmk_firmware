@@ -1,5 +1,5 @@
-import { type Fetcher, DATA_TYPE, MOCK_API_CALLS } from "./fetcher.ts";
-import { logger } from "./logger.ts";
+import { type Fetcher, DATA_TYPE, MOCK_API_CALLS } from './fetcher.ts';
+import { logger } from './logger.ts';
 
 const METRO_LINES = {
     '6': 'line:IDFM:C01376',
@@ -11,7 +11,7 @@ const METRO_LINES = {
 function abbreviateStation(name: string): string {
     // Remove common prefixes and normalize
     const normalized = name
-        .normalize("NFD").replace(/\p{Diacritic}/gu, "") // remove accents
+        .normalize('NFD').replace(/\p{Diacritic}/gu, '') // remove accents
         .replace(/^(Porte de |Mairie de |Place |Gare de )/i, '')
         .toUpperCase();
     return normalized.slice(0, 16);
@@ -44,12 +44,10 @@ export class MetroData implements Fetcher {
                                 {
                                     text: "Métro 9 : Ajustement de l'intervalle entre les trains - Train stationne",
                                     channel: {
-                                        content_type: "text/plain",
-                                        id: "d9dbc5a6-7a06-11e8-8b8c-005056a44da2",
-                                        name: "titre",
-                                        types: [
-                                            "title"
-                                        ]
+                                        content_type: 'text/plain',
+                                        id: 'd9dbc5a6-7a06-11e8-8b8c-005056a44da2',
+                                        name: 'titre',
+                                        types: ['title'],
                                     }
                                 }
                             ],
@@ -91,11 +89,10 @@ export class MetroData implements Fetcher {
     }
 
     findMessage(data: any): string {
-        // only select relevant info, and remove accents
-        const message = data.disruptions[0].messages.find((m: any) => m.channel.name == "titre").text.normalize("NFD").replace(/\p{Diacritic}/gu, "");
-        if (message.includes(' : '))
-            return message.split(' : ')[1]
-        return message;
+        const title = data.disruptions[0]?.messages?.find((m: any) => m.channel?.name === 'titre')?.text;
+        const raw = (title ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '');
+        const parts = raw.split(' : ');
+        return parts.length > 1 ? parts.slice(1).join(' : ') : raw;
     }
 
     findStations(data: any): string[] {

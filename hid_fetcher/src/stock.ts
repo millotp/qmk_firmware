@@ -9,19 +9,18 @@ type AlpacaBar = {
     vw: number;
 };
 
+/** Normalized per-symbol slice (see Alpaca `GET /v2/stocks/bars` multi-symbol response). */
 type AlpacaBarResponse = {
-    bars: Array<AlpacaBar> | null,
+    bars: Array<AlpacaBar> | null;
     next_page_token: string | null;
     symbol: string;
-}
+};
 
-type AlpacaLatestTradeResponse = {
-    trade: {
-        p: number; // price
-        t: string; // timestamp
-    };
-    symbol: string;
-}
+/** Raw Alpaca historical bars response: `bars` is keyed by symbol, not an array. */
+type AlpacaMultiSymbolBarsResponse = {
+    bars: Partial<Record<string, AlpacaBar[]>>;
+    next_page_token: string | null;
+};
 
 type AlpacaSnapshotResponse = {
     latestTrade: {
@@ -90,17 +89,25 @@ export class StockData implements Fetcher {
             }
         }
 
-        // the market is open for 6h30m each weekday, we can fit 80 data point on the screen.
-        // we limit to 78 points so that they are each 5 min appart exactly.
+        // ~6h30 session → up to ~78 five-minute bars for the graph. Use documented
+        // `GET /v2/stocks/bars?symbols=...` (bars keyed by symbol, not per-path `/.../{symbol}/bars`).
         const params = new URLSearchParams({
-            timeframe: "5Min",
+            timeframe: '5Min',
             feed: 'iex',
+            symbols: STOCKS.join(','),
+            limit: '1000',
         });
 
-        const data: Record<Stock, AlpacaBarResponse> = {} as any;
+        const raw = await this.callAlpaca<AlpacaMultiSymbolBarsResponse>(`v2/stocks/bars?${params}`);
+        const data: Record<Stock, AlpacaBarResponse> = {} as Record<Stock, AlpacaBarResponse>;
 
         for (const symbol of STOCKS) {
-            data[symbol] = await this.callAlpaca(`v2/stocks/${symbol}/bars?${params}`);
+            const list = raw.bars[symbol];
+            data[symbol] = {
+                bars: list ?? [],
+                next_page_token: raw.next_page_token,
+                symbol,
+            };
         }
 
         return data;
@@ -192,7 +199,9 @@ export class StockData implements Fetcher {
                 // Calculate day change from previous day's close (like Google/Yahoo Finance)
                 const dayChange = prevClose > 0 ? ((currentPrice - prevClose) / prevClose) * 100 : 0;
 
-                console.log(`${symbol}: prevClose: ${prevClose}  current: ${currentPrice}  change: ${dayChange.toFixed(2)}%  points: ${stock.bars.length}`);
+                logger.debug(
+                    `${symbol}: prevClose=${prevClose} current=${currentPrice} change=${dayChange.toFixed(2)}% bars=${stock.bars.length}`,
+                );
 
                 this.stocks[symbol] = {
                     symbol: symbol,

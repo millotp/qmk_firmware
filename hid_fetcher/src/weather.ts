@@ -1,5 +1,5 @@
-import { type Fetcher, DATA_TYPE, MOCK_API_CALLS } from "./fetcher.ts";
-import { logger } from "./logger.ts";
+import { type Fetcher, DATA_TYPE, MOCK_API_CALLS } from './fetcher.ts';
+import { logger } from './logger.ts';
 
 const CITY = 'Paris,fr';
 
@@ -78,8 +78,8 @@ export class WeatherData implements Fetcher {
                     }
                 ],
                 main: {
-                    temp: 280,
-                    feels_like: 275,
+                    temp: 12,
+                    feels_like: 10,
                     humidity: 72,
                     pressure: 1013,
                 },
@@ -93,7 +93,7 @@ export class WeatherData implements Fetcher {
             };
         }
 
-        const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(CITY)}&appid=${this.#apiKey}&units=metrics`;
+        const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(CITY)}&appid=${this.#apiKey}&units=metric`;
         const response = await fetch(url);
         if (!response.ok) {
             throw new Error(`Weather API error: ${response.status}`);
@@ -106,8 +106,9 @@ export class WeatherData implements Fetcher {
         try {
             const data = await this.makeCall();
             this.condition = this.mapWeatherCondition(data.weather[0]?.id || 800);
-            this.temperature = Math.round(data.main.temp - 273.15);
-            this.feelsLike = Math.round(data.main.feels_like - 273.15);
+            // `units=metric` → temperatures are already °C
+            this.temperature = Math.round(data.main.temp);
+            this.feelsLike = Math.round(data.main.feels_like);
             this.humidity = data.main.humidity;
             this.pressure = Math.round(data.main.pressure);
             this.windSpeed = Math.round(data.wind.speed);
